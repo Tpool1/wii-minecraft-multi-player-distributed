@@ -191,11 +191,14 @@ internal sealed class TwoViews : Form
         if (parts.Length != 2 || !int.TryParse(parts[0], out pid) || !long.TryParse(parts[1], out value)) return;
         var target = new IntPtr(value);
         if (pid == processIds[0] || !OwnedWindow(target, pid)) return;
-        using (var candidate = Process.GetProcessById(pid)) {
-            if (!String.Equals(dolphinPath, candidate.MainModule.FileName, StringComparison.OrdinalIgnoreCase) ||
-                candidate.MainWindowHandle != target) return;
-        }
-        Marshal.ThrowExceptionForHR(DwmRegisterThumbnail(Handle, target, out thumbnails[1]));
+        try {
+            using (var candidate = Process.GetProcessById(pid)) {
+                if (!String.Equals(dolphinPath, candidate.MainModule.FileName, StringComparison.OrdinalIgnoreCase) ||
+                    candidate.MainWindowHandle != target) return;
+            }
+        } catch (ArgumentException) { return; } catch (InvalidOperationException) { return; }
+          catch (System.ComponentModel.Win32Exception) { return; }
+        if (DwmRegisterThumbnail(Handle, target, out thumbnails[1]) < 0) return;
         windows[1] = target; processIds[1] = pid;
         LayoutViews();
         LogConnection("rejoined");

@@ -12,11 +12,17 @@ param(
     [switch]$Cold,
     [switch]$Traverse,
     [switch]$AvatarView,
+    [ValidateRange(1,50)][int]$Rejoins = 1,
+    [ValidateRange(0,120)][int]$SoakMinutes = 0,
     [ValidateRange(10,600)][int]$TimeoutSeconds = 120
 )
 
 $ErrorActionPreference = 'Stop'
 if ($LegacyControl) { $Offline=$true }
+if (($SoakMinutes -or $Rejoins -gt 1) -and ($Offline -or $Play -or $Traverse -or $AvatarView)) {
+    throw 'Soak and repeated peer rejoin run inside the automated two-player scenario.'
+}
+$saveAt=96 + 60*$SoakMinutes + 45*($Rejoins-1)
 if ($AvatarView -and ($Traverse -or $Cold -or $Offline -or $Play)) { throw '-AvatarView uses a dedicated pair.' }
 if ($Traverse -and ($Cold -or $Offline -or $Play)) { throw '-Traverse requires a dedicated automated pair.' }
 if ($Cold -and ($Offline -or $Play)) { throw '-Cold requires an automated two-player run.' }
@@ -36,7 +42,8 @@ $mode = if ($AvatarView) { 'avatar' } elseif ($Traverse) { 'traverse' } elseif (
 $record = [ordered]@{ utc = [DateTime]::UtcNow.ToString('o'); mode=$mode; game=$gamePath
     gameSHA256=(Get-FileHash -LiteralPath $gamePath).Hash; dolphin=$dolphinPath
     dolphinSHA256=(Get-FileHash -LiteralPath $dolphinPath).Hash; machine=$env:COMPUTERNAME
-    cards=@{}; processes=@{}; endpoint='127.0.0.1:45838'; passed=$false }
+    cards=@{}; processes=@{}; endpoint='127.0.0.1:45838'; cold=[bool]$Cold;
+    requestedSoakMinutes=$SoakMinutes; requestedRejoins=$Rejoins; passed=$false }
 $projector = $null
 $guests = @{}
 $logs = @{}
@@ -111,8 +118,13 @@ IOS_NET = False
         if ($Offline) { $map['Buttons/A'] = Test-Pulse '0.04' '0.09' }
         if ($Cold -and $role -eq 'A') {
             # Real Home then Wii Remote 1 selects Save & quit in the in-game menu.
-            $map['Buttons/Home'] = '(timer(200.0) > 0.48) & (timer(200.0) < 0.49)'
-            $map['Buttons/1'] = '(timer(200.0) > 0.50) & (timer(200.0) < 0.51)'
+            $period=$saveAt+104
+            $intervals=@(@('Buttons/Home',$saveAt), @('Buttons/1',($saveAt+4)))
+            foreach ($interval in $intervals) {
+                $lo=([double]$interval[1]/$period).ToString('F6',[Globalization.CultureInfo]::InvariantCulture)
+                $hi=(([double]$interval[1]+2)/$period).ToString('F6',[Globalization.CultureInfo]::InvariantCulture)
+                $map[$interval[0]]="(timer($period.0) > $lo) & (timer($period.0) < $hi)"
+            }
         }
     }
     if ($AvatarView) {
@@ -124,8 +136,14 @@ IOS_NET = False
         foreach ($key in @($map.Keys)) { $map[$key]='0' }
         $out = if ($role -eq 'A') { 'D-Pad/Left' } else { 'D-Pad/Right' }
         $back = if ($role -eq 'A') { 'D-Pad/Right' } else { 'D-Pad/Left' }
-        $map[$out] = '(timer(48.0) > 0.23) & (timer(48.0) < 0.44)'
-        $map[$back] = '(timer(48.0) > 0.67) & (timer(48.0) < 0.88)'
+        if ($role -eq 'B') {
+            # Step around the wooden arch on the spawn row before walking west.
+            $map['D-Pad/Down'] = '(timer(90.0) > 0.18) & (timer(90.0) < 0.20)'
+            $map['D-Pad/Up'] = '(timer(90.0) > 0.90) & (timer(90.0) < 0.92)'
+        }
+        # Give both games time to receive all 25 starting columns before the first outward walk.
+        $map[$out] = '(timer(90.0) > 0.32) & (timer(90.0) < 0.45)'
+        $map[$back] = '(timer(90.0) > 0.72) & (timer(90.0) < 0.85)'
     }
     $remote = @('[Wiimote1]','Device = DInput/0/Keyboard Mouse','Source = 1','Extension = Nunchuk',
         'IR/Up = 0','IR/Down = 0','IR/Left = 0','IR/Right = 0') +
@@ -174,6 +192,14 @@ function Wait-HostListener {
         return $matched.Count -gt 0
     } $TimeoutSeconds
 }
+function Rebind-Peer {
+    Wait-Until 'replacement peer renderer window' {
+        $guests.B.Refresh()
+        return $guests.B.MainWindowHandle -ne 0
+    } 20
+    Set-LocalFile "$run/peer-source.txt" ("{0} {1}" -f $guests.B.Id,$guests.B.MainWindowHandle.ToInt64())
+    Wait-Until 'projector reattached the new peer renderer' { !(Test-Path -LiteralPath "$run/peer-source.txt") } 15
+}
 function Get-Assessment {
     if (!(Test-Path -LiteralPath $logs.A) -or !(Test-Path -LiteralPath $logs.B)) { return $false }
     $report = & $node "$PSScriptRoot/verify-game.cjs" $logs.A $logs.B
@@ -182,6 +208,7 @@ function Get-Assessment {
     if ($code -gt 1) { throw "Verifier failed to run with exit code $code." }
     return $code -eq 0
 }
+. (Join-Path $PSScriptRoot 'session-checks.ps1')
 try {
     foreach ($role in $cards.Keys) { New-GuestProfile $role }
     Write-Record
@@ -243,7 +270,15 @@ try {
             $record.passed = $true
         } elseif ($Play) {
             Write-Host 'The two-player projector is live. F11 toggles fullscreen. Escape closes the projector and its two guests.'
-            $projector.WaitForExit()
+            Write-Host 'If B disconnects, F5 on the projector rejoins using its original private card.'
+            while (!$projector.HasExited) {
+                if ($guests.B.HasExited -and (Test-Path -LiteralPath "$run/rejoin.request")) {
+                    [IO.File]::Delete("$run/rejoin.request")
+                    Start-Guest 'B'
+                    Rebind-Peer
+                }
+                Start-Sleep -Milliseconds 300
+            }
             $record.passed=$projector.ExitCode -eq 0
         } else {
             $step='in-game state and compositor'
@@ -257,22 +292,13 @@ try {
             if ((Get-Content -LiteralPath "$run/in-game-frames.txt" -Raw) -notmatch 'distinctDetailedFrames=True') {
                 throw 'The projector captured identical or blank panes; inspect in-game-A.png and in-game-B.png.'
             }
-            $step='disconnect and peer save'
-            Stop-OwnedProcess $guests.B
-            $guests.Remove('B')
-            Wait-Until 'host flushed departing peer' { (Read-GuestLog 'A') -match '\[FCX\] PEER_SAVE ok=1' } 30
-            Move-Item -LiteralPath $logs.B -Destination "$run/B-first.log"
-            $step='peer rejoin'
-            $record.processes.Bfirst=$record.processes.B
-            Start-Guest 'B'
-            Wait-Until 'rejoined peer received slot and local pose' {
-                $contents=Read-GuestLog 'B'
-                $contents -match '\[FCX\] READY slot=1' -and $contents -match '\[FCX\] LOCAL slot=1'
-            } $TimeoutSeconds
-            $record.peerRejoined=$true
+            $step='continuous paired gameplay'
+            Invoke-PairedSoak
+            $step='peer checkpoint, reconnect and projector recovery'
+            Invoke-PeerCycles
             if ($Cold) {
                 $step='in-game Save and quit'
-                Wait-Until 'host completed the normal Save and quit checkpoint' { (Read-GuestLog 'A') -match '\[FCX\] HOST_SAVE ok=1' } 140
+                Wait-Until 'host completed the normal Save and quit checkpoint' { (Read-GuestLog 'A') -match '\[FCX\] HOST_SAVE ok=1' } ($saveAt+44)
                 foreach ($role in 'B','A') {
                     Stop-OwnedProcess $guests[$role]
                     $guests.Remove($role)

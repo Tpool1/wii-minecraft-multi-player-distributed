@@ -21,7 +21,7 @@ function poses(events, event, slot) {
   return events.filter(r => r.event === event && Number(r.fields.slot) === slot)
     .map(r => ({
       x: Number(r.fields.x), y: Number(r.fields.y), z: Number(r.fields.z),
-      line: r.line,
+      line: r.line, ms: r.ms,
     })).filter(p => [p.x, p.y, p.z].every(Number.isFinite));
 }
 
@@ -29,8 +29,15 @@ function transferredMotion(local, remote) {
   if (!local.length || !remote.length) return null;
   for (const p of local.slice(1)) {
     if (Math.hypot(p.x - local[0].x, p.z - local[0].z) < 0.35) continue;
-    const seen = remote.find(q => Math.hypot(p.x-q.x, p.y-q.y, p.z-q.z) <= 0.35 &&
-      Math.hypot(q.x-local[0].x, q.z-local[0].z) >= 0.35);
+    const distance = q => Math.hypot(p.x-q.x, p.y-q.y, p.z-q.z);
+    let seen = null;
+    for (const q of remote) {
+      if (p.ms === null || q.ms === null) continue;
+      const delta = Math.abs(q.ms - p.ms);
+      if (Math.min(delta, 3600000-delta) > 3000) continue;
+      if (distance(q) <= 0.35 && Math.hypot(q.x-local[0].x,q.z-local[0].z) >= 0.35 &&
+          (!seen || distance(q) < distance(seen))) seen = q;
+    }
     if (seen) return { start: local[0], local: p, remote: seen };
   }
   return null;
@@ -101,4 +108,4 @@ if (require.main === module) {
     process.exitCode = result.passed ? 0 : 1;
   }
 }
-module.exports = { verify, readEvents };
+module.exports = { verify, readEvents, poses, transferredMotion };

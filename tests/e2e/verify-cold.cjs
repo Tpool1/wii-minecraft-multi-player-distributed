@@ -1,6 +1,6 @@
 'use strict';
 const fs = require('node:fs');
-const { readEvents } = require('./verify-game.cjs');
+const { readEvents, poses, transferredMotion } = require('./verify-game.cjs');
 
 function snapshots(events, kind) {
   const result = new Map();
@@ -40,8 +40,23 @@ function verify(warmA, warmB, coldA, coldB) {
     saves, changedMarker:changed, markers, hostPose, peerPose };
 }
 if (require.main===module) {
-  if (process.argv.length!==6) throw new Error('Usage: node verify-cold.cjs WARM-A WARM-B COLD-A COLD-B');
-  const result=verify(...process.argv.slice(2).map(p=>fs.readFileSync(p,'utf8')));
+  const args=process.argv.slice(2);
+  const read=p=>fs.readFileSync(p,'utf8');
+  let result;
+  if ((args.length===3 || args.length===4) && args[0]==='--warm') {
+    const after=readEvents(read(args[2]));
+    result=restoredPose(readEvents(read(args[1])),after,1);
+    result.passed=result.passed && after.some(r=>r.event==='READY' && r.fields.slot==='1');
+    if (args[3]) {
+      const host=readEvents(read(args[3]));
+      const link=host.findLast(r=>r.event==='LINK' && r.fields.connected==='1');
+      const seen=link ? host.filter(r=>r.line>link.line) : [];
+      result.resumedMotion=transferredMotion(poses(after,'LOCAL',1),poses(seen,'REMOTE',1));
+      result.passed=result.passed && Boolean(result.resumedMotion);
+    }
+  } else if (args.length===4) {
+    result=verify(...args.map(read));
+  } else throw new Error('Usage: node verify-cold.cjs WARM-A WARM-B COLD-A COLD-B | --warm OLD-B NEW-B');
   console.log(JSON.stringify(result,null,2));
   process.exitCode=result.passed ? 0 : 1;
 }
