@@ -19,6 +19,9 @@
 
 # Local game data and emulator media
 /saves/
+/metrics[0-9][0-9]/
+# The paired launch script creates these uniquely named evidence/profile directories.
+run-????????-??????Z-??????/
 *.raw
 *.iso
 *.wbfs
