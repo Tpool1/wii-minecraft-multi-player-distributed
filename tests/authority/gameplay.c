@@ -7,9 +7,11 @@
 static struct block_data cell;
 static unsigned changes, private_updates[2], corrections[2], remote_poses[2];
 static int accepted = -1;
+static unsigned load_failures;
 static bool wall;
 static unsigned block_updates[2];
 static void received(unsigned recipient, const struct client_rpc* m) {
+	if(m->type == CRPC_HOST_LOAD_FAILED) ++load_failures;
 	if(m->type == CRPC_SET_BLOCK)
 		++block_updates[recipient];
 	if(m->type == CRPC_INVENTORY_SLOT)
@@ -29,6 +31,7 @@ bool lan_host_send(const struct client_rpc* m) {
 bool lan_host_enabled(void) {
 	return true;
 }
+bool session_trace_enabled(void) { return false; }
 void session_trace(const char* fmt, ...) {
 	if(strncmp(fmt, "EDIT ", 5))
 		return;
@@ -87,6 +90,14 @@ void aabb_translate(struct AABB* a, float x, float y, float z) {
 	} while(0)
 int main(void) {
 	struct server_local s = {0};
+	/* Low-level path failure must stop before any world or peer is exposed. */
+	struct server_rpc invalid = {.type=SRPC_LOAD_WORLD};
+	char longpath[700];
+	memset(longpath,'a',sizeof longpath - 1);
+	longpath[sizeof longpath-1]='\0';
+	string_init_set_str(invalid.payload.load_world.name,longpath);
+	REQUIRE(server_lan_local_command(&s,&invalid));
+	REQUIRE(load_failures==1 && !s.player.has_pos && !s.peer_joined);
 	struct item_data bag[2][INVENTORY_SIZE] = {0};
 	s.peer_joined = true;
 	for(unsigned i = 0; i < 2; ++i) {

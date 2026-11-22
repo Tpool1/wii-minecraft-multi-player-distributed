@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
+#include "../game/alloc_metrics.h"
 #include "server_lan.h"
 #include "../game/session_trace.h"
 #include "../item/window_container.h"
@@ -6,6 +7,7 @@
 #include "inventory_logic.h"
 #include "lan_transport.h"
 #include "peer_record.h"
+#include "world_txn.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -277,15 +279,19 @@ bool server_lan_save(struct server_local* s) {
 			return false;
 		dict_server_chunks_next(it);
 	}
+	const char* path = string_get_cstr(s->level_name);
+	if(!fcx_txn_before_players(path)) return false;
 	if(s->peer_record && !peer_record_save(s))
 		return false;
 	struct server_player* p = &s->player;
-	return level_archive_write_player(&s->level, (vec3) {p->x, p->y, p->z},
+	bool saved = level_archive_write_player(&s->level, (vec3) {p->x, p->y, p->z},
 									  (vec2) {p->rx, p->ry}, NULL, p->dimension)
 		&& level_archive_write_inventory(&s->level, &p->inventory)
 		&& level_archive_write(&s->level, LEVEL_PLAYER_HEALTH, &p->health)
 		&& level_archive_write(&s->level, LEVEL_TIME, &s->world_time)
-		&& level_archive_checkpoint(&s->level);
+		&& level_archive_checkpoint(&s->level) && fcx_txn_commit(path);
+	if(saved) s->dirty_evictions = 0;
+	return saved;
 }
 
 static void peer_closed(struct server_local* s) {
@@ -345,8 +351,20 @@ void server_lan_pump(struct server_local* s) {
 }
 
 bool server_lan_local_command(struct server_local* s, struct server_rpc* c) {
-	if(c->type == SRPC_LOAD_WORLD)
+	if(c->type == SRPC_LOAD_WORLD) {
+		if(s->player.has_pos) {
+			string_clear(c->payload.load_world.name);
+			return true;
+		}
+		if(!fcx_txn_recover(string_get_cstr(c->payload.load_world.name))) {
+			session_trace("RECOVERY ok=0");
+			clin_rpc_send(&(struct client_rpc){.type=CRPC_HOST_LOAD_FAILED});
+			string_clear(c->payload.load_world.name);
+			return true;
+		}
+		s->dirty_evictions = 0;
 		return false;
+	}
 	if(c->type == SRPC_UNLOAD_WORLD) {
 		if(!s->player.has_pos)
 			return true;
@@ -405,10 +423,10 @@ static bool deliver_column(unsigned slot, int x, int z,
 		   &msg.payload.chunk.lighting_sky, &msg.payload.chunk.lighting_torch};
 	for(unsigned k = 0; k < 4; ++k) {
 		size_t bytes = k ? n / 2 : n;
-		uint8_t* copy = malloc(bytes);
+		uint8_t* copy = alloc_payload(AM_NETWORK, bytes);
 		if(!copy) {
 			while(k > 0)
-				free(*out[--k]);
+				alloc_free(*out[--k]);
 			return false;
 		}
 		memcpy(copy, *out[k], bytes);
@@ -498,10 +516,19 @@ void server_lan_stream(struct server_local* s) {
 	s->world.peer_cx = cx[1];
 	s->world.peer_cz = cz[1];
 	int x, z;
-	if(server_world_furthest_chunk(&s->world, LAN_RADIUS, cx[0], cz[0], &x, &z)
-	   && !server_world_save_chunk(&s->world, true, x, z)) {
-		session_trace("CHUNK_SAVE ok=0 x=%d z=%d", x, z);
+	/* Bound undo storage between checkpoints, including evictions before a manual save. */
+	if(s->dirty_evictions >= 16 && !server_lan_save(s)) {
+		session_trace("AUTO_SAVE ok=0");
 		return;
+	}
+	if(server_world_furthest_chunk(&s->world, LAN_RADIUS, cx[0], cz[0], &x, &z)) {
+		struct server_chunk* old = dict_server_chunks_get(s->world.chunks, S_CHUNK_ID(x,z));
+		bool dirty = old && old->modified;
+		if(!server_world_save_chunk(&s->world, true, x, z)) {
+			session_trace("CHUNK_SAVE ok=0 x=%d z=%d", x, z);
+			return;
+		}
+		if(dirty) ++s->dirty_evictions;
 	}
 	unsigned first = s->peer_joined && s->next_peer;
 	if(!stream_one(s, first, cx[first], cz[first]) && s->peer_joined)

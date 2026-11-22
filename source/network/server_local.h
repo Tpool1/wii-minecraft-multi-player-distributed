@@ -77,6 +77,7 @@ struct server_local {
 	bool peer_joined, peer_record, next_peer;
 	uint32_t last_action[2];
 	uint32_t peer_generation;
+	unsigned dirty_evictions;
 
 	struct server_world world;
 	dict_entity_t entities;

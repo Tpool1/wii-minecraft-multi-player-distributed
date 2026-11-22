@@ -19,6 +19,7 @@ static unsigned round_id, events, acks, closed_links, delayed_sends, chunks;
 static uint32_t offset_ms, simulated_ms, due, hold_until, started;
 static bool counting_delay, partition_next;
 static size_t peak;
+static unsigned jitter30, jitter70;
 #define REQUIRE(v)                                                             \
 	do {                                                                       \
 		if(!(v)) {                                                             \
@@ -62,7 +63,12 @@ int lan_test_send(SOCKET socket, const char* data, size_t n, int flags) {
 		return pending_io();
 	if(delay_ms() > 0) {
 		if(!counting_delay) {
-			due = GetTickCount() + delay_ms();
+			int delay = delay_ms();
+			if(round_id == 6 && delay == 30)
+				++jitter30;
+			if(round_id == 6 && delay == 70)
+				++jitter70;
+			due = GetTickCount() + delay;
 			counting_delay = true;
 			++delayed_sends;
 		}
@@ -70,6 +76,8 @@ int lan_test_send(SOCKET socket, const char* data, size_t n, int flags) {
 			return pending_io();
 		counting_delay = false;
 	}
+	if(round_id == 6 && n > 2048)
+		n = 2048;
 	return send(socket, data, (int)n, flags);
 }
 int lan_test_recv(SOCKET socket, char* data, size_t n, int flags) {
@@ -218,7 +226,8 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 	if(!rejection && completed && !failed && round_id == LAST_ROUND
-	   && closed_links >= 10 && (host || chunks == 2)) {
+	   && closed_links >= 10 && (host || chunks == 2) && jitter30 && jitter70) {
+		printf("jitter sends: 30 ms x%u, 70 ms x%u\n", jitter30, jitter70);
 		printf("PASS %s: 11 sessions/10 rejoins, %u numbered records in each "
 			   "direction, %u scheduled egress delays\n",
 			   mode, LAST_ROUND * COUNT, delayed_sends);

@@ -17,6 +17,7 @@
 	along with CavEX.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "game/alloc_metrics.h"
 #include <assert.h>
 #include <malloc.h>
 #include <math.h>
@@ -38,7 +39,7 @@ void chunk_init(struct chunk* c, struct world* world, w_coord_t x, w_coord_t y,
 				w_coord_t z) {
 	assert(c && world);
 
-	c->blocks = malloc(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 / 2);
+	c->blocks = alloc_payload(AM_CHUNK, CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 / 2);
 	assert(c->blocks);
 
 	memset(c->blocks, BLOCK_AIR, CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 / 2);
@@ -60,14 +61,14 @@ void chunk_init(struct chunk* c, struct world* world, w_coord_t x, w_coord_t y,
 static void chunk_destroy(struct chunk* c) {
 	assert(c);
 
-	free(c->blocks);
+	alloc_free(c->blocks);
 
 	for(int k = 0; k < 13; k++) {
 		if(c->has_displist[k])
 			displaylist_destroy(c->mesh + k);
 	}
 
-	free(c);
+	alloc_free(c);
 }
 
 void chunk_ref(struct chunk* c) {

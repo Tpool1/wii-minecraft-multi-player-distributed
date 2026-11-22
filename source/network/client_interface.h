@@ -46,6 +46,7 @@ enum client_rpc_type {
 	CRPC_SPAWN_MINECART,
 	CRPC_REMOTE_PLAYER,
 	CRPC_HOST_SAVE_RESULT, /* local host UI only */
+	CRPC_HOST_LOAD_FAILED,
 };
 
 struct client_rpc {

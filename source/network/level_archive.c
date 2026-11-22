@@ -181,25 +181,15 @@ bool level_archive_write_inventory(struct level_archive* la,
 	if(!level_archive_read(la, LEVEL_PLAYER_INVENTORY, &inv, 0))
 		return false;
 
-	nbt_free_list(inv->payload.tag_list);
-
-	inv->payload.tag_list = malloc(sizeof(struct nbt_list));
-
-	if(!inv->payload.tag_list)
+	struct nbt_list* replacement = malloc(sizeof *replacement);
+	if(!replacement)
 		return false;
 
-	inv->payload.tag_list->data = malloc(sizeof(nbt_node));
-
-	if(!inv->payload.tag_list->data) {
-		free(inv->payload.tag_list);
-		return false;
-	}
-
-	inv->payload.tag_list->data->type = TAG_COMPOUND;
-
-	INIT_LIST_HEAD(&inv->payload.tag_list->entry);
-
-	la->modified = true;
+	INIT_LIST_HEAD(&replacement->entry);
+	replacement->data = malloc(sizeof *replacement->data);
+	if(!replacement->data)
+		goto failed;
+	replacement->data->type = TAG_COMPOUND;
 
 	for(int i = 0; i < (int)inventory->capacity; i++) {
 		if(inventory->items[i].id == 0)
@@ -260,7 +250,7 @@ bool level_archive_write_inventory(struct level_archive* la,
 		struct nbt_list* node = malloc(sizeof(struct nbt_list));
 
 		if(!node)
-			return false;
+			goto failed;
 
 		nbt_node* item = nbt_clone(&(nbt_node) {
 			.type = TAG_COMPOUND,
@@ -270,15 +260,22 @@ bool level_archive_write_inventory(struct level_archive* la,
 
 		if(!item) {
 			free(node);
-			return false;
+			goto failed;
 		}
 
 		node->data = item;
-
-		list_add_tail(&node->entry, &inv->payload.tag_list->entry);
+		list_add_tail(&node->entry, &replacement->entry);
 	}
 
+	struct nbt_list* previous = inv->payload.tag_list;
+	inv->payload.tag_list = replacement;
+	la->modified = true;
+	nbt_free_list(previous);
 	return true;
+
+failed:
+	nbt_free_list(replacement);
+	return false;
 }
 
 // could use float* instead of vec3, but not sure of possible alignment for vec3

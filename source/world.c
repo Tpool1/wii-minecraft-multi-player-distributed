@@ -17,6 +17,7 @@
 	along with CavEX.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "game/alloc_metrics.h"
 #include <assert.h>
 
 #include "game/game_state.h"
@@ -242,7 +243,7 @@ void world_set_block(struct world* w, w_coord_t x, w_coord_t y, w_coord_t z,
 		struct chunk* c = world_chunk_from_section(w, s, y);
 
 		if(!c) {
-			c = malloc(sizeof(struct chunk));
+			c = alloc_payload(AM_CHUNK, sizeof(struct chunk));
 			assert(c);
 
 			w_coord_t cy = y / CHUNK_SIZE;

@@ -8,7 +8,9 @@
 /* Configure once at startup, before launching the authority thread. */
 void session_metrics_enable(bool on);
 void session_metrics_frame(ptime_t start);
-void session_metrics_tick(ptime_t start, ptime_t finish);
+void session_metrics_world_scan(ptime_t start, ptime_t finish);
+enum tick_phase { TICK_IDLE = 1, TICK_LOADING = 2, TICK_SOLO = 4, TICK_PAIRED = 8 };
+void session_metrics_tick(ptime_t start, ptime_t finish, enum tick_phase phase);
 #ifdef PLATFORM_WII
 void session_metrics_buffers(void *const xfb[3], uint32_t xfb_size,
                              const void *fifo, uint32_t fifo_size);

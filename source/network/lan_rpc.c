@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
+#include "../game/alloc_metrics.h"
 #include "lan_rpc.h"
 #include <math.h>
 #include <stdlib.h>
@@ -158,10 +159,10 @@ static uint32_t checksum(const uint8_t* p, size_t n) {
 void lan_free_chunk(struct client_rpc* r) {
 	if(r->type != CRPC_CHUNK)
 		return;
-	free(r->payload.chunk.ids);
-	free(r->payload.chunk.metadata);
-	free(r->payload.chunk.lighting_sky);
-	free(r->payload.chunk.lighting_torch);
+	alloc_free(r->payload.chunk.ids);
+	alloc_free(r->payload.chunk.metadata);
+	alloc_free(r->payload.chunk.lighting_sky);
+	alloc_free(r->payload.chunk.lighting_torch);
 	r->payload.chunk.ids = r->payload.chunk.metadata = NULL;
 	r->payload.chunk.lighting_sky = r->payload.chunk.lighting_torch = NULL;
 }
@@ -199,7 +200,7 @@ static void chunk(struct cursor* c, struct client_rpc* r) {
 	for(size_t i = 0; i < 4; i++) {
 		size_t count = i ? half : volume;
 		if(c->in)
-			*planes[i] = malloc(count);
+			*planes[i] = alloc_payload(AM_NETWORK, count);
 		if(!*planes[i]) {
 			c->ok = false;
 			return;

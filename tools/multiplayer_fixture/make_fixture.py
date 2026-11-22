@@ -36,7 +36,7 @@ def level():
     inv = [n.Compound(Slot=n.Byte(slot), id=n.Short(block), Count=n.Byte(32), Damage=n.Short(0))
            for slot, block in enumerate((4, 5))]
     player = n.Compound(Pos=n.List[n.Double]([8.5, 65.62, 8.5]), Motion=n.List[n.Double]([0, 0, 0]),
-                        Rotation=n.List[n.Float]([0, 0]), Dimension=n.Int(0), Health=n.Short(20),
+                        Rotation=n.List[n.Float]([0, 0]), Dimension=n.Int(0), Health=n.Short(160),
                         Inventory=n.List[n.Compound](inv))
     data = n.Compound(Player=player, LevelName=n.String("Fixture"), Time=n.Long(6000),
                       LastPlayed=n.Long(0), SizeOnDisk=n.Long(0), RandomSeed=n.Long(37),
@@ -193,7 +193,7 @@ def metrics(image):
             if not re.fullmatch(r"metrics[0-9]{2}", run, re.IGNORECASE):
                 continue
             result[run] = {}
-            for name in ("frame.csv", "tick.csv", "memory.csv"):
+            for name in ("frame.csv", "tick.csv", "memory.csv", "alloc.csv"):
                 path = f"{APP}/{run}/{name}"
                 if card.isfile(path):
                     result[run][name] = card.readbytes(path).decode("ascii").splitlines()

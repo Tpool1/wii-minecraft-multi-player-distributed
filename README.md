@@ -42,10 +42,10 @@ The native suite checks launch choices, authority behavior and on-wire messages.
 ```powershell
 python -m unittest discover -s tools/multiplayer_fixture -p test_fixture.py -v
 python tools/multiplayer_fixture/make_fixture.py build $env:FCAVEX_CARDS
-.\tests\e2e\run.ps1 -Game .\build\claw\boot.elf -Dolphin $env:DOLPHIN -HostCard "$env:FCAVEX_CARDS\A.raw" -PeerCard "$env:FCAVEX_CARDS\B.raw" -OutputRoot $env:FCAVEX_RUNS
+.\tests\e2e\run.ps1 -Game .\build\claw\boot.elf -Dolphin $env:DOLPHIN -HostCard "$env:FCAVEX_CARDS\A.raw" -PeerCard "$env:FCAVEX_CARDS\B.raw" -OutputRoot $env:FCAVEX_RUNS -Cold
 ```
 
-For human-controlled play, add `-Play` to the same command. Player A uses WASD for the D-pad and player B uses the arrow keys. F11 toggles the two-view projector between windowed and fullscreen. Escape closes the projector and both guests.
+`-Cold` checks the saved game after both guests restart. For human-controlled play, replace `-Cold` with `-Play`. A moves with WASD and B with the arrow keys. F11 toggles the two-view projector between windowed and fullscreen. Escape closes the projector and both guests. [Dolphin setup, controls and replay instructions](tests/e2e/README.md)
 
 Each run has a new directory under `FCAVEX_RUNS`. Open `run.json` for build hashes and the outcome, and `gameplay.json` for the gameplay checks when both guests produced logs. To check the logs independently, run `node tests/e2e/verify-game.cjs <host-log> <peer-log>`. It checks for distinct slots, movement observed across the connection in each direction, and an accepted edit from each player applied to both views. Physical Wii memory, capture latency, audio and save recovery have separate acceptance checks in the test diagram.
 

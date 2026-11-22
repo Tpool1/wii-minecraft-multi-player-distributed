@@ -17,6 +17,7 @@
 	along with CavEX.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "../game/alloc_metrics.h"
 #include <assert.h>
 
 #include "../lighting.h"
@@ -24,8 +25,10 @@
 #include "client_interface.h"
 #include "server_local.h"
 #include "lan_transport.h"
+#include "world_txn.h"
 #include "server_world.h"
 #include "../daytime.h"
+#include "../game/session_metrics.h"
 
 #define EXPLOSION_MAX_RAYS 300
 #define EXPLOSION_STEP     0.5f
@@ -55,11 +58,11 @@ static void random_unit_vector(vec3 out) {
 void server_world_chunk_destroy(struct server_chunk* sc) {
 	assert(sc);
 
-	free(sc->ids);
-	free(sc->metadata);
-	free(sc->lighting_sky);
-	free(sc->lighting_torch);
-	free(sc->heightmap);
+	alloc_free(sc->ids);
+	alloc_free(sc->metadata);
+	alloc_free(sc->lighting_sky);
+	alloc_free(sc->lighting_torch);
+	alloc_free(sc->heightmap);
 }
 
 void server_world_create(struct server_world* w, string_t level_name,
@@ -323,6 +326,8 @@ bool server_world_save_chunk_obj(struct server_world* w, bool erase,
 	assert(w && c);
 
 	if(c->modified) {
+		if(lan_host_enabled() && !fcx_txn_before_column(string_get_cstr(w->level_name),
+				w->dimension == WORLD_DIM_NETHER, x, z)) return false;
 		//  load region archive into cache
 		struct region_archive tmp;
 		struct region_archive* ra = server_world_chunk_region(w, x, z);
@@ -396,6 +401,13 @@ struct region_archive* server_world_chunk_region(struct server_world* w,
 
 
 void server_world_tick(struct server_world* w, struct server_local* s) {
+    ptime_t scan_start = time_get();
+    /* Block definitions are registered at startup. Cell IDs can change during
+     * callbacks, so read each ID when the scan reaches that position. */
+    bool tickable[sizeof blocks / sizeof *blocks];
+    for (size_t id = 0; id < sizeof tickable / sizeof *tickable; id++)
+        tickable[id] = blocks[id] && blocks[id]->onWorldTick;
+
     dict_server_chunks_it_t it;
     dict_server_chunks_it(it, w->chunks);
 
@@ -406,14 +418,15 @@ void server_world_tick(struct server_world* w, struct server_local* s) {
 
         for (int cx = 0; cx < CHUNK_SIZE; cx++) {
             for (int cz = 0; cz < CHUNK_SIZE; cz++) {
+                size_t column = S_CHUNK_IDX(cx, 0, cz);
                 for (int y = 0; y < WORLD_HEIGHT; y++) {
-                    struct block_data blk;
-                    if (!server_chunk_get_block(sc, cx, y, cz, &blk))
+                    uint8_t id = sc->ids[column + y];
+                    if (!tickable[id])
                         continue;
 
-                    const struct block* b = blocks[blk.type];
-                    if (!b || !b->onWorldTick)
-                        continue;
+                    struct block_data blk;
+                    server_chunk_get_block(sc, cx, y, cz, &blk);
+                    const struct block* b = blocks[id];
 
 
                     // determine if we need any neigbour info, only is needed for these types
@@ -478,6 +491,7 @@ void server_world_tick(struct server_world* w, struct server_local* s) {
 
         dict_server_chunks_next(it);
     }
+    session_metrics_world_scan(scan_start, time_get());
 }
 
 void server_world_random_tick(struct server_world* w, struct random_gen* g,

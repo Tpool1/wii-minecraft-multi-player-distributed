@@ -17,6 +17,7 @@
 	along with CavEX.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "game/alloc_metrics.h"
 #include <assert.h>
 #include <stdint.h>
 
@@ -138,7 +139,7 @@ static void chunk_test_init(struct block_data* bd, uint8_t* reachable) {
 
 	memset(reachable, 0, 6 * sizeof(uint8_t));
 
-	bool* visited = malloc(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
+	bool* visited = alloc_payload(AM_MESH, CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
 	assert(visited);
 
 	memset(visited, false, CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
@@ -159,7 +160,7 @@ static void chunk_test_init(struct block_data* bd, uint8_t* reachable) {
 	}
 
 	stack_destroy(&queue);
-	free(visited);
+	alloc_free(visited);
 }
 
 static void chunk_mesher_vertex_light(struct block_data* bd,
@@ -341,7 +342,7 @@ static void chunk_mesher_rebuild(struct block_data* bd, w_coord_t cx,
 						   || blocks[local.type]->renderBlockAlways) {
 							if(!light_data) {
 								light_data
-									= malloc((CHUNK_SIZE + 2) * (CHUNK_SIZE + 2)
+									= alloc_payload(AM_MESH, (CHUNK_SIZE + 2) * (CHUNK_SIZE + 2)
 											 * (CHUNK_SIZE + 2) * 3);
 								assert(light_data);
 								chunk_mesher_vertex_light(bd, light_data);
@@ -472,7 +473,7 @@ static void chunk_mesher_rebuild(struct block_data* bd, w_coord_t cx,
 	}
 
 	if(light_data)
-		free(light_data);
+		alloc_free(light_data);
 }
 
 static void chunk_mesher_build(struct chunk_mesher_rpc* req) {
@@ -496,7 +497,7 @@ static void chunk_mesher_build(struct chunk_mesher_rpc* req) {
 
 	chunk_test_init(req->request.blocks, req->result.reachable);
 
-	free(req->request.blocks);
+	alloc_free(req->request.blocks);
 }
 
 static void* chunk_mesher_local_thread(void* user) {
@@ -551,7 +552,7 @@ bool chunk_mesher_send(struct chunk* c) {
 		return false;
 
 	struct block_data* bd
-		= malloc((CHUNK_SIZE + 2) * (CHUNK_SIZE + 2) * (CHUNK_SIZE + 2)
+		= alloc_payload(AM_MESH, (CHUNK_SIZE + 2) * (CHUNK_SIZE + 2) * (CHUNK_SIZE + 2)
 				 * sizeof(struct block_data));
 
 	if(!bd) {

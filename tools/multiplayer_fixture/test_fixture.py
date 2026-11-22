@@ -48,6 +48,7 @@ class FixtureTest(unittest.TestCase):
         with PyFatFS(str(self.output / "A.raw"), read_only=True) as a:
             root = APP + "/saves/Fixture/"
             level = nbtlib.File.parse(io.BytesIO(gzip.decompress(a.readbytes(root + "level.dat"))))["Data"]
+            self.assertEqual(int(level["Player"]["Health"]), 160)
             self.assertEqual(list(level["Player"]["Pos"]), [8.5, 65.62, 8.5])
             self.assertEqual([int(i["Count"]) for i in level["Player"]["Inventory"]], [32, 32])
             for cx, cz in [(0, 0), (-5, -5), (5, 5), (-1, 1)]:

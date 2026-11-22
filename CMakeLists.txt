@@ -109,6 +109,7 @@ add_executable(cavex
 				source/game/session_launch.c
 				source/game/session_trace.c
 				source/game/session_metrics.c
+				source/game/alloc_metrics.c
 
 				source/item/window_container.c
 				source/item/inventory.c
@@ -141,6 +142,7 @@ add_executable(cavex
 				source/network/lan_rpc.c
 				source/network/lan_transport.c
 				source/network/checkpoint_file.c
+				source/network/world_txn.c
 				source/network/peer_record.c
 				source/network/server_lan.c
 				source/network/complex_block_archive.c

@@ -80,6 +80,7 @@ int main(void) {
 #endif
 
 	config_create(&gstate.config_user, "config.json");
+	session_metrics_enable(!strcmp(config_read_string(&gstate.config_user, "network.metrics", ""), "on"));
 
 	input_init();
 	blocks_init();
@@ -110,7 +111,6 @@ int main(void) {
 		config_read_string(&gstate.config_user, "network.port", NULL), world);
 	session_trace_enable(!strcmp(config_read_string(&gstate.config_user, "network.trace", ""), "on"));
 	session_trace_probes(&gstate.config_user);
-	session_metrics_enable(!strcmp(config_read_string(&gstate.config_user, "network.metrics", ""), "on"));
 	bool configured = launch.screen != LAUNCH_ERROR &&
 		lan_configure(launch.role, config_read_string(&gstate.config_user, "network.bind", "127.0.0.1"),
 					  config_read_string(&gstate.config_user, "network.host", "127.0.0.1"), launch.port);

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
+#include "../game/alloc_metrics.h"
 #include "lan_transport.h"
 #include "lan_socket.inc"
 #include "lan_frame.h"
@@ -198,7 +199,7 @@ bool lan_configure(enum lan_role value, const char* bind_ip,
 	   && (!address(host_ip, &remote_ip)
 		   || (local_ip >> 24 == 127) != (remote_ip >> 24 == 127)))
 		return false;
-	buf = calloc(1, sizeof *buf);
+	buf = alloc_zero(AM_NETWORK, sizeof *buf);
 	if(!buf)
 		return false;
 #ifdef PLATFORM_WII

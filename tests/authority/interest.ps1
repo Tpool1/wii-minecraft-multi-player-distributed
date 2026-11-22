@@ -32,10 +32,27 @@ if (!$DependencySource) {
 if (!(Test-Path -LiteralPath "$DependencySource/m-lib/m-string.h")) {
     throw 'Specify -DependencySource with prepared m-lib, cglm and cNBT headers or run tools/windows/Build-Wii.ps1 once.'
 }
+$level=Get-Content -LiteralPath "$repo/source/network/level_archive.c" -Raw
+$writer=[regex]::Match($level,'(?ms)^bool level_archive_write_inventory\(.*?^}')
+if(!$writer.Success) { throw 'Inventory writer function was not found' }
+[IO.File]::WriteAllText("$scratch/inventory-write.inc",$writer.Value)
+& $Compiler -std=gnu99 -O1 -DPLATFORM_PC -DCGLM_ALL_UNALIGNED "-I$DependencySource" "-I$DependencySource/network" "-I$scratch" "$PSScriptRoot/inventory-save.c" -o "$scratch/inventory-save.exe"
+if($LASTEXITCODE) { throw 'Inventory allocation test did not compile' }
+& "$scratch/inventory-save.exe"
+if($LASTEXITCODE) {exit $LASTEXITCODE}
 & $Compiler -std=gnu99 -O2 -DPLATFORM_PC -DCGLM_ALL_UNALIGNED "-I$DependencySource" "-I$DependencySource/network" `
-    "$PSScriptRoot/gameplay.c" "$repo/source/item/inventory.c" -o "$scratch/gameplay.exe"
+    "$PSScriptRoot/gameplay.c" "$repo/source/network/world_txn.c" "$repo/source/item/inventory.c" -o "$scratch/gameplay.exe"
 if ($LASTEXITCODE -ne 0) { throw 'Gameplay authority test compile failed' }
 & "$scratch/gameplay.exe"
 $code=$LASTEXITCODE
 Write-Output "Two-player gameplay authority behavioral result = $code"
+if ($code -ne 0) { exit $code }
+& $Compiler -std=c99 -Wall -Wextra -Werror "$PSScriptRoot/world-txn.c" "$repo/source/network/world_txn.c" -o "$scratch/world-txn.exe"
+if ($LASTEXITCODE -ne 0) { throw 'World journal test compile failed' }
+Push-Location $scratch
+try {
+    & "$scratch/world-txn.exe"
+    $code = $LASTEXITCODE
+} finally { Pop-Location }
+Write-Output "Interrupted world checkpoint recovery behavioral result = $code"
 if ($code -ne 0) { exit $code }

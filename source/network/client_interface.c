@@ -17,6 +17,7 @@
 	along with CavEX.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "../game/alloc_metrics.h"
 #include "client_interface.h"
 #include "client_entities.h"
 #include "../game/game_state.h"
@@ -76,10 +77,10 @@ void clin_chunk(w_coord_t x, w_coord_t y, w_coord_t z, w_coord_t sx,
 	}
 
 	session_trace_column(&gstate.world, x, y, z, sx, sy, sz);
-	free(ids);
-	free(metadata);
-	free(lighting_sky);
-	free(lighting_torch);
+	alloc_free(ids);
+	alloc_free(metadata);
+	alloc_free(lighting_sky);
+	alloc_free(lighting_torch);
 }
 
 void clin_process(struct client_rpc* call) {
@@ -252,6 +253,9 @@ void clin_process(struct client_rpc* call) {
 								  call->payload.set_block.z, call->payload.set_block.block);
 			}
 
+			break;
+		case CRPC_HOST_LOAD_FAILED:
+			screen_load_error("Cannot open host save. Check SD. Home: worlds");
 			break;
 		case CRPC_HOST_SAVE_RESULT:
 			screen_host_save_result(call->payload.host_save_result);

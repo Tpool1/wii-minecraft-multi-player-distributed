@@ -17,9 +17,11 @@
 	along with CavEX.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "../game/alloc_metrics.h"
 #include <assert.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <zlib.h>
 #include <unistd.h>
 #include <m-lib/m-string.h>
 
@@ -149,16 +151,16 @@ bool region_archive_create(struct region_archive* ra, string_t world_name,
 						   w_coord_t x, w_coord_t z, enum world_dim dimension) {
 	assert(ra && world_name);
 
-	ra->offsets = malloc(sizeof(uint32_t) * REGION_SIZE * REGION_SIZE);
+	ra->offsets = alloc_payload(AM_ARCHIVE, sizeof(uint32_t) * REGION_SIZE * REGION_SIZE);
 
 	if(!ra->offsets)
 		return false;
 
 	ra->occupied_sorted
-		= malloc(sizeof(uint32_t) * (REGION_SIZE * REGION_SIZE + 1));
+		= alloc_payload(AM_ARCHIVE, sizeof(uint32_t) * (REGION_SIZE * REGION_SIZE + 1));
 
 	if(!ra->occupied_sorted) {
-		free(ra->offsets);
+		alloc_free(ra->offsets);
 		return false;
 	}
 
@@ -176,8 +178,8 @@ bool region_archive_create(struct region_archive* ra, string_t world_name,
 	ra->needs_refresh = false;
 	ilist_regions_init_field(ra);
 	if(!load_offsets(ra)) {
-		free(ra->offsets);
-		free(ra->occupied_sorted);
+		alloc_free(ra->offsets);
+		alloc_free(ra->occupied_sorted);
 		string_clear(ra->file_name);
 		return false;
 	}
@@ -188,8 +190,8 @@ bool region_archive_create(struct region_archive* ra, string_t world_name,
 void region_archive_destroy(struct region_archive* ra) {
 	assert(ra && ra->offsets && ra->occupied_sorted);
 
-	free(ra->offsets);
-	free(ra->occupied_sorted);
+	alloc_free(ra->offsets);
+	alloc_free(ra->occupied_sorted);
 	string_clear(ra->file_name);
 }
 
@@ -217,9 +219,40 @@ bool region_archive_contains(struct region_archive* ra, w_coord_t x,
 	return true;
 }
 
-bool region_archive_get_blocks(struct region_archive* ra, w_coord_t x,
-							   w_coord_t z, struct server_chunk* sc) {
-	assert(ra && sc);
+struct column_nbt {
+	nbt_node *root;
+	nbt_node *blocks, *metadata, *sky, *torch, *height;
+};
+
+/* One column at a time. Reject excessive inflated metadata before parsing or
+ * writing; silently replacing an unreadable previous record would lose tags. */
+static nbt_node *parse_column(const uint8_t *data, size_t bytes) {
+	enum { MAX_NBT_BYTES = 2 * 1024 * 1024 };
+	z_stream stream = {0};
+	if(inflateInit2(&stream, 15 + 32) != Z_OK) return NULL;
+	stream.next_in = (Bytef *)data;
+	stream.avail_in = bytes;
+	struct buffer raw = BUFFER_INIT;
+	uint8_t block[1024];
+	int status;
+	do {
+		stream.next_out = block;
+		stream.avail_out = sizeof(block);
+		status = inflate(&stream, Z_NO_FLUSH);
+		size_t length = sizeof(block) - stream.avail_out;
+		if(length > MAX_NBT_BYTES - raw.len || (length && buffer_append(&raw, block, length))) {
+			status = Z_MEM_ERROR;
+			break;
+		}
+	} while(status == Z_OK);
+	inflateEnd(&stream);
+	nbt_node *root = status == Z_STREAM_END ? nbt_parse(raw.data, raw.len) : NULL;
+	buffer_free(&raw);
+	return root;
+}
+
+static bool load_column(struct region_archive *ra, w_coord_t x, w_coord_t z,
+						struct column_nbt *nodes) {
 	bool chunk_exists;
 	if(!region_archive_contains(ra, x, z, &chunk_exists) || !chunk_exists) return false;
 
@@ -254,7 +287,7 @@ bool region_archive_get_blocks(struct region_archive* ra, w_coord_t x,
 		return false;
 	}
 
-	void* nbt_compressed = malloc(length - 1);
+	void* nbt_compressed = alloc_payload(AM_ARCHIVE, length - 1);
 
 	if(!nbt_compressed) {
 		fclose(f);
@@ -262,14 +295,14 @@ bool region_archive_get_blocks(struct region_archive* ra, w_coord_t x,
 	}
 
 	if(!fread(nbt_compressed, length - 1, 1, f)) {
-		free(nbt_compressed);
+		alloc_free(nbt_compressed);
 		fclose(f);
 		return false;
 	}
 
-	nbt_node* chunk = nbt_parse_compressed(nbt_compressed, length - 1);
+	nbt_node* chunk = parse_column(nbt_compressed, length - 1);
 
-	free(nbt_compressed);
+	alloc_free(nbt_compressed);
 	fclose(f);
 
 	if(!chunk)
@@ -307,22 +340,28 @@ bool region_archive_get_blocks(struct region_archive* ra, w_coord_t x,
 		return false;
 	}
 
-	// borrow memory regions from nbt tree
+	*nodes = (struct column_nbt){chunk, n_blocks, n_metadata, n_skyl, n_torchl, n_height};
+	return true;
+}
 
-	n_blocks->type = TAG_INVALID;
-	n_metadata->type = TAG_INVALID;
-	n_skyl->type = TAG_INVALID;
-	n_torchl->type = TAG_INVALID;
-	n_height->type = TAG_INVALID;
+bool region_archive_get_blocks(struct region_archive *ra, w_coord_t x, w_coord_t z,
+							   struct server_chunk *sc) {
+	struct column_nbt n;
+	if(!load_column(ra, x, z, &n)) return false;
+	sc->ids = n.blocks->payload.tag_byte_array.data;
+	sc->metadata = n.metadata->payload.tag_byte_array.data;
+	sc->lighting_sky = n.sky->payload.tag_byte_array.data;
+	sc->lighting_torch = n.torch->payload.tag_byte_array.data;
+	sc->heightmap = n.height->payload.tag_byte_array.data;
+	alloc_adopt(AM_AUTHORITY, sc->ids, n.blocks->payload.tag_byte_array.length);
+	alloc_adopt(AM_AUTHORITY, sc->metadata, n.metadata->payload.tag_byte_array.length);
+	alloc_adopt(AM_AUTHORITY, sc->lighting_sky, n.sky->payload.tag_byte_array.length);
+	alloc_adopt(AM_AUTHORITY, sc->lighting_torch, n.torch->payload.tag_byte_array.length);
+	alloc_adopt(AM_AUTHORITY, sc->heightmap, n.height->payload.tag_byte_array.length);
 
-	sc->ids = n_blocks->payload.tag_byte_array.data;
-	sc->metadata = n_metadata->payload.tag_byte_array.data;
-	sc->lighting_sky = n_skyl->payload.tag_byte_array.data;
-	sc->lighting_torch = n_torchl->payload.tag_byte_array.data;
-	sc->heightmap = n_height->payload.tag_byte_array.data;
-
-	nbt_free(chunk);
-
+	/* Transfer just the five array allocations to the resident server chunk. */
+	n.blocks->type = n.metadata->type = n.sky->type = n.torch->type = n.height->type = TAG_INVALID;
+	nbt_free(n.root);
 	return true;
 }
 
@@ -373,11 +412,7 @@ static bool store_record(struct region_archive *ra, size_t slot, struct buffer b
 	return rebuild_occupied_list(ra);
 }
 
-bool region_archive_set_blocks(struct region_archive* ra, w_coord_t x,
-							   w_coord_t z, struct server_chunk* sc) {
-	assert(ra && sc);
-	assert(CHUNK_REGION_COORD(x) == ra->x && CHUNK_REGION_COORD(z) == ra->z);
-
+static struct buffer new_column(w_coord_t x, w_coord_t z, const struct server_chunk *sc) {
 	struct nbt_list root_list_sentinel = (struct nbt_list) {
 		.data = NULL,
 	};
@@ -469,13 +504,31 @@ bool region_archive_set_blocks(struct region_archive* ra, w_coord_t x,
 		list_add_tail(&level_list[k].entry, &level_list_sentinel.entry);
 	}
 
-	struct buffer res = nbt_dump_compressed(&root, STRAT_INFLATE);
+	return nbt_dump_compressed(&root, STRAT_INFLATE);
+}
 
-	if(!res.data)
-		return false;
-
+bool region_archive_set_blocks(struct region_archive *ra, w_coord_t x,
+							   w_coord_t z, struct server_chunk *sc) {
+	assert(ra && sc);
+	bool exists;
+	if(!region_archive_contains(ra, x, z, &exists)) return false;
+	struct buffer body;
+	if(exists) {
+		struct column_nbt n;
+		if(!load_column(ra, x, z, &n)) return false;
+		memcpy(n.blocks->payload.tag_byte_array.data, sc->ids, n.blocks->payload.tag_byte_array.length);
+		memcpy(n.metadata->payload.tag_byte_array.data, sc->metadata, n.metadata->payload.tag_byte_array.length);
+		memcpy(n.sky->payload.tag_byte_array.data, sc->lighting_sky, n.sky->payload.tag_byte_array.length);
+		memcpy(n.torch->payload.tag_byte_array.data, sc->lighting_torch, n.torch->payload.tag_byte_array.length);
+		memcpy(n.height->payload.tag_byte_array.data, sc->heightmap, n.height->payload.tag_byte_array.length);
+		body = nbt_dump_compressed(n.root, STRAT_INFLATE);
+		nbt_free(n.root);
+	} else {
+		body = new_column(x, z, sc);
+	}
+	if(!body.data) return false;
 	int rx = x & (REGION_SIZE - 1), rz = z & (REGION_SIZE - 1);
-	bool success = store_record(ra, rx + rz * REGION_SIZE, res);
-	buffer_free(&res);
+	bool success = store_record(ra, rx + rz * REGION_SIZE, body);
+	buffer_free(&body);
 	return success;
 }

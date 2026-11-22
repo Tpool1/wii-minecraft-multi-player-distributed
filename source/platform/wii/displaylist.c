@@ -17,6 +17,7 @@
 	along with CavEX.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "../../game/alloc_metrics.h"
 #include <assert.h>
 #include <gccore.h>
 #include <malloc.h>
@@ -43,21 +44,24 @@ void displaylist_init(struct displaylist* l, size_t vertices,
 	 * by realloc */
 	l->index = DISPLAYLIST_CLL + 3;
 	l->finished = false;
+	l->failed = false;
 }
 
 void displaylist_destroy(struct displaylist* l) {
 	assert(l);
 
 	if(l->data)
-		free(l->data);
+		alloc_free(l->data);
 }
 
 void displaylist_reset(struct displaylist* l) {
 	assert(l && !l->finished);
+	l->failed = false;
 	l->index = DISPLAYLIST_CLL + 3;
 }
 
 void displaylist_finalize(struct displaylist* l, uint16_t vtxcnt) {
+	if(l->failed) return;
 	assert(l && !l->finished && l->data);
 
 	MEM_U8(l->data, DISPLAYLIST_CLL) = GX_QUADS | (GX_VTXFMT0 & 7);
@@ -73,16 +77,21 @@ void displaylist_finalize(struct displaylist* l, uint16_t vtxcnt) {
 void displaylist_pos(struct displaylist* l, int16_t x, int16_t y, int16_t z) {
 	assert(l && !l->finished);
 
+	if(l->failed) return;
 	if(!l->data) {
-		l->data = malloc(l->length + DISPLAYLIST_CLL);
-		assert(l->data);
+		l->data = alloc_payload(AM_MESH, l->length + DISPLAYLIST_CLL);
+		if(!l->data) { l->failed = true; return; }
 	}
 
 	if(l->index + 9 > l->length) {
-		l->length = (l->length * 5 / 4 + 9 + DISPLAYLIST_CLL - 1)
+		size_t length = (l->length * 5 / 4 + 9 + DISPLAYLIST_CLL - 1)
 			/ DISPLAYLIST_CLL * DISPLAYLIST_CLL;
-		l->data = realloc(l->data, l->length + DISPLAYLIST_CLL);
-		assert(l->data);
+		if(!alloc_resize(AM_MESH, &l->data, length + DISPLAYLIST_CLL)) {
+			/* A partial GX command would corrupt the FIFO. Discard this list. */
+			l->failed = true;
+			return;
+		}
+		l->length = length;
 	}
 
 	MEM_U16(l->data, l->index) = x;
@@ -94,11 +103,13 @@ void displaylist_pos(struct displaylist* l, int16_t x, int16_t y, int16_t z) {
 }
 
 void displaylist_color(struct displaylist* l, uint8_t index) {
+	if(l->failed) return;
 	assert(l && !l->finished && l->data);
 	MEM_U8(l->data, l->index++) = index;
 }
 
 void displaylist_texcoord(struct displaylist* l, uint8_t s, uint8_t t) {
+	if(l->failed) return;
 	assert(l && !l->finished && l->data);
 	MEM_U8(l->data, l->index++) = s;
 	MEM_U8(l->data, l->index++) = t;
@@ -116,6 +127,7 @@ void displaylist_render(struct displaylist* l) {
 }
 
 void displaylist_render_immediate(struct displaylist* l, uint16_t vtxcnt) {
+	if(l->failed) return;
 	assert(l && l->data);
 
 	uint8_t* base = (uint8_t*)l->data + DISPLAYLIST_CLL + 3;

@@ -40,8 +40,15 @@ static void screen_lworld_reset(struct screen* s, int width, int height) {
 }
 
 static void screen_lworld_update(struct screen* s, float dt) {
-	if((load_error || lan_current_role() == LAN_PEER) && input_pressed(IB_HOME))
-		gstate.quit = true;
+	if((load_error || lan_current_role() == LAN_PEER) && input_pressed(IB_HOME)) {
+		if(load_error && lan_current_role() == LAN_HOST) {
+			load_error = NULL;
+			screen_set(&screen_select_world);
+		} else {
+			gstate.quit = true;
+		}
+		return;
+	}
 	if(!load_error && gstate.world_loaded)
 		screen_set(&screen_ingame);
 }
@@ -54,6 +61,7 @@ static void screen_lworld_render2D(struct screen* s, int width, int height) {
 	gutil_text((width - gutil_font_width(title, 8 * GFX_GUI_SCALE)) / 2,
 			   height / 2 - 20 * GFX_GUI_SCALE, title, 8 * GFX_GUI_SCALE, true);
 
+	if(load_error) return;
 	gutil_text((width - gutil_font_width("Building terrain", 8 * GFX_GUI_SCALE)) / 2,
 			   height / 2 + 4 * GFX_GUI_SCALE, "Building terrain", 8 * GFX_GUI_SCALE, true);
 

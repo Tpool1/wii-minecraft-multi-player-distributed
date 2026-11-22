@@ -10,7 +10,9 @@ This run qualifies one pair of consoles, controllers, network and display chain.
 | Wii software in Dolphin | Separate role logs, `run.json`, `gameplay.json`, projector captures and cold-restart results where recorded | Emulated guests executing the named Wii build. The Windows projector composites two DWM surfaces; the runner sets Dolphin volume to 75 for A and 0 for B. These settings alone do not establish physical sound or video timing. |
 | Physical Wii A and B | Both SD logs, LAN observations, capture settings and synchronized TV recording | Controller pairing, real heap behavior, wireless/wired link, video resets, audio selection and measured input-to-screen delay. Run H01–H04 below. |
 
-The earlier two-instance homebrew and three-message socket smoke checks established that the lab could boot two guests and exchange bytes. They do not count as fCavEX gameplay or hardware acceptance. Preserve failures alongside successful runs.
+On 22 November 2026, run `run-20261122-163958Z-695a2c` passed with two Dolphin 2609b guests on claw. The Wii ELF SHA-256 was `c9c5c6cb43fa24f00b6528fa1f7b4b4966ad08a4a1c6f39e248aa67856e66e7c`. Each client saw the other move and saw one accepted edit from each player. The Windows projector showed the two game views. The peer rejoined the running host; after both guests restarted, all four marker blocks matched and both player positions recovered within 0.041 blocks (rounded). Evidence files are `run.json`, `gameplay.json`, `cold.json` and `in-game.png` in that run directory.
+
+The earlier two-instance homebrew and three-message socket smoke checks established that the lab could boot two guests and exchange bytes. On-device acceptance remains open. Preserve failures alongside successful runs.
 
 ## Before booting
 
@@ -31,6 +33,8 @@ The earlier two-instance homebrew and three-message socket smoke checks establis
 
 Count latency in recorded frames × 1000 / measured camera fps. Label visible button travel as a surrogate when electrical closure is unavailable. Record the actual refresh periods for each mode. Identical nominal frame rates do not guarantee synchronized scanout.
 
-The current telemetry records sampled unreserved arena minima, aggregate newlib allocator totals and bank-tagged framebuffer/FIFO bytes. Arena minima are not total free heap, and aggregate newlib data does not identify a largest free block for each bank. Keep A’s memory independent from B’s. Track dropped VI samples and missing CSV windows alongside percentile reports.
+`memory.csv` records sampled unreserved arena minima, aggregate newlib allocator totals and bank-tagged framebuffer/FIFO bytes. With metrics enabled, `alloc.csv` reports observed live/peak bytes and failed requests for tagged chunk/slab, mesh, LAN, region and transferred block-plane allocations by bank. Record dropped observations. Codec internals, most textures, runtime allocations and stacks remain outside this coverage. The 4,096-entry recorder itself uses about 49 KB plus allocator and mutex overhead on Wii. A failure near a reset can precede the next completed 100-frame reporting window. Keep A’s and B’s measurements separate.
+
+Unreserved arena space, reusable allocator memory and the largest usable free span answer different questions. Independently measure a per-bank span before declaring the contiguous-headroom gate passed. Track dropped VI samples and missing CSV windows alongside percentile reports.
 
 If A alone misses the memory/tick targets, compare a small external authority using the same world and route before changing the render distance. If both clients miss the targets, inspect their mesh, chunk decode and presentation costs first.

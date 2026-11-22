@@ -17,6 +17,7 @@
 	along with CavEX.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "../game/alloc_metrics.h"
 #include <assert.h>
 #include <math.h>
 #include <stdlib.h>
@@ -36,6 +37,8 @@
 #include "lan_transport.h"
 #include "../game/session_trace.h"
 #include "../game/session_metrics.h"
+#include "lan_pacing.h"
+#include <unistd.h>
 
 #define CHUNK_DIST2(x1, x2, z1, z2)                                            \
 	(((x1) - (x2)) * ((x1) - (x2)) + ((z1) - (z2)) * ((z1) - (z2)))
@@ -237,6 +240,12 @@ void server_local_set_player_health(struct server_local* s, short new_health) {
 		.type = CRPC_PLAYER_SET_HEALTH,
 		.payload.player_set_health.health = s->player.health
 	});
+}
+
+static void host_load_failed(struct server_local* s) {
+	string_reset(s->level_name);
+	session_trace("LOAD ok=0");
+	clin_rpc_send(&(struct client_rpc){.type=CRPC_HOST_LOAD_FAILED});
 }
 
 static void server_local_process(struct server_rpc* call, void* user) {
@@ -469,8 +478,33 @@ static void server_local_process(struct server_rpc* call, void* user) {
 				vec3 pos;
 				vec2 rot;
 				enum world_dim dim;
-				if(level_archive_read_player(&s->level, pos, rot, NULL, &dim)) {
+				bool has_pose = level_archive_read_player(&s->level, pos, rot, NULL, &dim);
+				bool host = lan_host_enabled();
+				if(host && (!has_pose || !isfinite(pos[0]) || !isfinite(pos[1])
+					|| !isfinite(pos[2]) || !isfinite(rot[0]) || !isfinite(rot[1])
+					|| fabs(pos[0]) > 1000000 || fabs(pos[2]) > 1000000
+					|| pos[1] < -2 || pos[1] > WORLD_HEIGHT + 4
+					|| !level_archive_read_inventory(&s->level, &s->player.inventory)
+					|| !level_archive_read(&s->level, LEVEL_TIME, &s->world_time, 0)
+					|| !level_archive_read(&s->level, LEVEL_PLAYER_HEALTH, &s->player.health, 0))) {
+					level_archive_destroy(&s->level);
+					host_load_failed(s);
+					return;
+				}
+				if(has_pose) {
 					server_world_create(&s->world, s->level_name, dim);
+					if(host) {
+						int cx = WCOORD_CHUNK_OFFSET((int)floor(pos[0]));
+						int cz = WCOORD_CHUNK_OFFSET((int)floor(pos[2]));
+						struct server_chunk *center;
+						if(!server_world_disk_has_chunk(&s->world, cx, cz) ||
+							!server_world_load_chunk(&s->world, cx, cz, &center)) {
+							server_world_destroy(&s->world);
+							level_archive_destroy(&s->level);
+							host_load_failed(s);
+							return;
+						}
+					}
 					s->player.x = pos[0];
 					s->player.y = pos[1];
 					s->player.z = pos[2];
@@ -481,12 +515,12 @@ static void server_local_process(struct server_rpc* call, void* user) {
 					s->player.old_vel_y = 0;
 					s->player.vel_y = 0;
 					s->player.has_pos = true;
-					if(lan_host_enabled()) level_archive_read_inventory(&s->level,&s->player.inventory);
 				}
 
-				level_archive_read(&s->level, LEVEL_TIME, &s->world_time, 0);
-
-				level_archive_read(&s->level, LEVEL_PLAYER_HEALTH, &s->player.health, 0);
+				if(!host) {
+					level_archive_read(&s->level, LEVEL_TIME, &s->world_time, 0);
+					level_archive_read(&s->level, LEVEL_PLAYER_HEALTH, &s->player.health, 0);
+				}
 				if (s->player.health > MAX_PLAYER_HEALTH) s->player.health = MAX_PLAYER_HEALTH;
 				level_archive_read(&s->level, LEVEL_PLAYER_SPAWNX, &s->player.spawn_x, 0);
 				level_archive_read(&s->level, LEVEL_PLAYER_SPAWNY, &s->player.spawn_y, 0);
@@ -510,6 +544,8 @@ static void server_local_process(struct server_rpc* call, void* user) {
 					.type = CRPC_PLAYER_SET_HEALTH,
 					.payload.player_set_health.health = s->player.health
 				});
+			} else if(lan_host_enabled()) {
+				host_load_failed(s);
 			}
 			break;
 	}
@@ -617,10 +653,10 @@ static void server_local_update(struct server_local* s) {
 		if(c_nearest
 		   && server_world_load_chunk(&s->world, c_nearest_x, c_nearest_z, &sc)) {
 			size_t sz = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
-			void* ids = malloc(sz);
-			void* metadata = malloc(sz / 2);
-			void* lighting_sky = malloc(sz / 2);
-			void* lighting_torch = malloc(sz / 2);
+			void* ids = alloc_payload(AM_NETWORK, sz);
+			void* metadata = alloc_payload(AM_NETWORK, sz / 2);
+			void* lighting_sky = alloc_payload(AM_NETWORK, sz / 2);
+			void* lighting_torch = alloc_payload(AM_NETWORK, sz / 2);
 
 			memcpy(ids, sc->ids, sz);
 			memcpy(metadata, sc->metadata, sz / 2);
@@ -710,12 +746,28 @@ static void server_local_update(struct server_local* s) {
 	} else s->player.oxygen = MAX_OXYGEN;
 }
 
+static enum tick_phase tick_phase(const struct server_local *s) {
+	if(!s->player.has_pos || s->paused) return TICK_IDLE;
+	if(!s->player.finished_loading) return TICK_LOADING;
+	if(lan_host_enabled() && (s->views[0].count < LAN_COLUMNS ||
+	   (s->peer_joined && (!s->peer.finished_loading || s->views[1].count < LAN_COLUMNS))))
+		return TICK_LOADING;
+	return s->peer_joined ? TICK_PAIRED : TICK_SOLO;
+}
+
 static void* server_local_thread(void* user) {
 	while(1) {
 		ptime_t start=time_get();
 		server_local_update(user);
-		session_metrics_tick(start,time_get());
-		thread_msleep(50);
+		ptime_t finish = time_get();
+		session_metrics_tick(start, finish, tick_phase(user));
+		if(lan_host_enabled()) {
+			/* The old Wii thread_msleep rounds down to video refreshes. */
+			unsigned wait = lan_tick_wait_ms(time_diff_ms(start, time_get()));
+			usleep(wait * 1000u);
+		} else {
+			thread_msleep(50);
+		}
 	}
 
 	return NULL;
