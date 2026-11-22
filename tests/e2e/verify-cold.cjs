@@ -13,9 +13,9 @@ function snapshots(events, kind) {
   return result;
 }
 
-function restoredPose(before, after, slot) {
-  const select = events => events.filter(r => r.event === 'LOCAL' && Number(r.fields.slot) === slot);
-  const a = select(before).at(-1), b = select(after)[0];
+function restoredPose(before, after, slot, source='LOCAL') {
+  const select = (events,kind) => events.filter(r => r.event === kind && Number(r.fields.slot) === slot);
+  const a = select(before,source).at(-1), b = select(after,'LOCAL')[0];
   if (!a || !b) return { passed:false };
   const distance = Math.hypot(...['x','y','z'].map(k => Number(a.fields[k])-Number(b.fields[k])));
   return { passed: distance <= 0.40, distance, previous:a.fields, cold:b.fields };
@@ -35,9 +35,13 @@ function verify(warmA, warmB, coldA, coldB) {
   });
   const changed = markers.some(m=>m.expected !== undefined && m.initial !== undefined && m.initial !== m.expected);
   const saves = a.filter(r => r.event==='HOST_SAVE' && r.fields.ok==='1');
-  const hostPose = restoredPose(a,ca,0), peerPose = restoredPose(b,cb,1);
+  const checkpoint = saves.at(-1);
+  const confirmed = checkpoint ? a.filter(r=>r.line<=checkpoint.line) : [];
+  const hostPose = restoredPose(confirmed,ca,0);
+  const peerPose = restoredPose(confirmed,cb,1,'REMOTE');
+  const lastPeerDisplay = restoredPose(b,cb,1);
   return { passed: saves.length>0 && changed && markers.every(m=>m.passed) && hostPose.passed && peerPose.passed,
-    saves, changedMarker:changed, markers, hostPose, peerPose };
+    saves, changedMarker:changed, markers, hostPose, peerPose, lastPeerDisplay };
 }
 if (require.main===module) {
   const args=process.argv.slice(2);
@@ -49,8 +53,21 @@ if (require.main===module) {
     result.passed=result.passed && after.some(r=>r.event==='READY' && r.fields.slot==='1');
     if (args[3]) {
       const host=readEvents(read(args[3]));
-      const link=host.findLast(r=>r.event==='LINK' && r.fields.connected==='1');
-      const seen=link ? host.filter(r=>r.line>link.line) : [];
+      const ready=after.find(r=>r.event==='READY' && r.fields.slot==='1');
+      const age=r=>ready && ready.ms!==null && r.ms!==null ? (ready.ms-r.ms+3600000)%3600000 : Infinity;
+      // Align by the replacement's actual READY, even when reviewing a sealed log
+      // containing later reconnects or a host shutdown.
+      const link=host.filter(r=>r.event==='LINK' && r.fields.connected==='1' && age(r)<=120000)
+        .sort((a,b)=>age(a)-age(b))[0];
+      const close=link && host.find(r=>r.line>link.line && r.event==='LINK' && r.fields.connected==='0');
+      const seen=link ? host.filter(r=>r.line>link.line && (!close || r.line<close.line)) : [];
+      const checkpoint=link && host.findLast(r=>r.line<link.line && r.event==='PEER_SAVE' && r.fields.ok==='1');
+      const confirmed=checkpoint ? host.filter(r=>r.line<=checkpoint.line) : [];
+      const lastPeerDisplay=result;
+      result=restoredPose(confirmed,after,1,'REMOTE');
+      result.lastPeerDisplay=lastPeerDisplay;
+      result.newPeerReady=after.some(r=>r.event==='READY' && r.fields.slot==='1');
+      result.passed=result.passed && result.newPeerReady;
       result.resumedMotion=transferredMotion(poses(after,'LOCAL',1),poses(seen,'REMOTE',1));
       result.passed=result.passed && Boolean(result.resumedMotion);
     }

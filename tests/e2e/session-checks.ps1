@@ -43,7 +43,15 @@ function Invoke-PairedSoak {
                 elapsedSeconds=[Math]::Round($elapsed.Elapsed.TotalSeconds,3); hostPid=$guests.A.Id;
                 peerPid=$guests.B.Id; projectorPid=$projector.Id; samples=$samples }
             Set-LocalFile "$run/soak.json" ($soak | ConvertTo-Json -Depth 6)
-            if ($soak.passed) { $record.soakSeconds=$soak.elapsedSeconds; return }
+            if ($soak.passed) {
+                Set-LocalFile "$run/capture.request" 'soak-end'
+                Wait-Until 'final live game frame from both guests after the soak' { Test-Path -LiteralPath "$run/soak-end-frames.txt" } 20
+                if ((Get-Content -LiteralPath "$run/soak-end-frames.txt" -Raw) -notmatch 'distinctDetailedFrames=True') {
+                    throw 'The end-of-soak paired frame is blank or duplicated.'
+                }
+                $record.soakSeconds=$soak.elapsedSeconds
+                return
+            }
         }
         Start-Sleep -Milliseconds 250
     } while ($true)

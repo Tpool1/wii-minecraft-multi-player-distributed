@@ -214,7 +214,8 @@ internal sealed class TwoViews : Form
         string name;
         try { name = File.ReadAllText(request).Trim(); } catch (IOException) { return; }
         if (name != "in-game" && name != "after-edit" && name != "startup" && name != "avatar-view" &&
-            name != "peer-offline" && name != "peer-rejoined") return;
+            name != "peer-offline" && name != "peer-rejoined" && name != "peer-offline-final" &&
+            name != "peer-rejoined-final" && name != "soak-end") return;
         // Display only the requested projection over the desktop during its scoped snapshot.
         TopMost = true;
         BringToFront();
