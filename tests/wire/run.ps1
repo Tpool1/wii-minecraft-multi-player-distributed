@@ -20,15 +20,18 @@ $flags = @('-std=gnu11','-Wall','-Wextra','-Wno-unused-function','-Wno-unused-pa
            '-Dptime_t=uint64_t',"-I$IncludeDir","-I$IncludeDir/cglm","-I$net")
 function Build-Test([string]$Name,[string[]]$Units,[string[]]$Libraries) {
     $files = @((Join-Path $PSScriptRoot ($Name+'_test.c')))
-    $files += $Units | ForEach-Object { Join-Path $net ($_+'.c') }
+    foreach($unit in $Units) { $files += Join-Path $net ($unit+'.c') }
+    if($Name -in 'lan_transport','lan_fault') { $files+=Join-Path $PSScriptRoot 'fixture_registry.c' }
     $exe = Join-Path $OutputDirectory ($Name+'.exe')
     & $Compiler @flags @files @Libraries -o $exe
     if ($LASTEXITCODE) { throw "$Name compile failed" }
 }
+Build-Test lan_entity @() @()
 Build-Test lan_frame @('lan_frame') @()
 Build-Test lan_rpc @('lan_rpc') @()
 Build-Test lan_transport @('lan_transport','lan_frame','lan_rpc') @('-lws2_32')
-foreach ($name in 'lan_frame','lan_rpc') {
+Build-Test lan_fault @('lan_transport','lan_frame','lan_rpc') @('-DLAN_TEST_IO','-lws2_32')
+foreach ($name in 'lan_entity','lan_frame','lan_rpc') {
     & (Join-Path $OutputDirectory ($name+'.exe')) 2>&1 | Tee-Object -FilePath (Join-Path $OutputDirectory ($name+'.log'))
     if ($LASTEXITCODE) { throw "$name failed" }
 }
@@ -47,4 +50,22 @@ Get-Content -LiteralPath (Join-Path $OutputDirectory 'host.log'),(Join-Path $Out
 if ($failed) {
     Get-Content -LiteralPath (Join-Path $OutputDirectory 'host-errors.log'),(Join-Path $OutputDirectory 'peer-errors.log')
     throw 'Loopback transport failed.'
+}
+
+# The rejection probes use the same listener as the eventual successful peer.
+$probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
+$probe.Start()
+try { $port = $probe.LocalEndpoint.Port } finally { $probe.Stop() }
+$fault = Join-Path $OutputDirectory 'lan_fault.exe'
+$server = Start-Process -FilePath $fault -ArgumentList @('host',$port) -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $OutputDirectory 'fault-host.log') -RedirectStandardError (Join-Path $OutputDirectory 'fault-host-errors.log')
+try {
+    foreach($role in 'bad-protocol','bad-build','bad-content','peer') {
+        & $fault $role $port 2>&1 | Tee-Object -FilePath (Join-Path $OutputDirectory ('fault-'+$role+'.log'))
+        if($LASTEXITCODE){throw "$role fault check failed"}
+    }
+    if(!$server.WaitForExit(35000) -or $server.ExitCode -ne 0){throw 'Host fault check failed'}
+    Get-Content -LiteralPath (Join-Path $OutputDirectory 'fault-host.log')
+} finally {
+    if(!$server.HasExited){$server.Kill();$server.WaitForExit()}
+    Get-Content -LiteralPath (Join-Path $OutputDirectory 'fault-host-errors.log')
 }

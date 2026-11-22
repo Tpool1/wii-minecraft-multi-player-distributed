@@ -82,6 +82,7 @@ struct block_data world_get_block(struct world* w, w_coord_t x, w_coord_t y,
 								  w_coord_t z);
 void world_set_block(struct world* w, w_coord_t x, w_coord_t y, w_coord_t z,
 					 struct block_data blk, bool light_update);
+void world_apply_block(struct world *w, w_coord_t x, w_coord_t y, w_coord_t z, struct block_data block);
 void world_update_lighting(struct world* w);
 void world_preload(struct world* w,
 				   void (*progress)(struct world* w, float percent));

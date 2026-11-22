@@ -15,7 +15,7 @@ In the repository root, set `FCAVEX_SDK` to the SDK directory and `CC` to the na
 .\tests\run.ps1 -Compiler $env:CC
 ```
 
-The build writes `boot.dol`, `boot.elf` and `boot.map` under `build/claw/`. Its GCC settings use GNU99, `-O2` and section garbage collection. Historical release binaries used a different build configuration. Native tests reuse the staged headers. To use headers prepared elsewhere, pass `-IncludeDir` to the test runner and point it to the parent of `cglm/` and `m-lib/`.
+The build writes `boot.dol`, `boot.elf` and `boot.map` under `build/claw/`. Its GCC settings use GNU99, `-O2` and section garbage collection. Historical release binaries used a different build configuration. Native tests reuse the staged source tree. To reuse another build's dependencies, pass its `build/claw/staging/source` directory to the test runner with `-IncludeDir`. This directory contains the game headers and `cglm/`, `cNBT/` and `m-lib/`.
 
 On claw the native compiler is Clang 23.1.6. To reproduce it, unpack `llvm-mingw-20261117-ucrt-x86_64.zip` and set `CC` to its `bin/clang.exe`. The release SHA-256 is `4d002e330a0f703625aa5ccbc37e96f8f824413e163bfc7336774aabd2c3a412`. [Compiler release](https://github.com/mstorsjo/llvm-mingw/releases/tag/20261117)
 
@@ -28,12 +28,12 @@ Set the fields below inside a top-level `network` object in `config.json`, prese
 | Setting | Host | Peer |
 |---|---|---|
 | `role` | `"host"` | `"peer"` |
-| `bind` | Local private IPv4 address of the host Wii | Default |
+| `bind` | Host Wii’s private IPv4 address | Peer Wii’s own private IPv4 address |
 | `host` | Default | Same private IPv4 address as the host |
 | `port` | `"45838"` | `"45838"` |
 | `world` | Optional relative save path, e.g. `"saves/Fixture"` | Omit |
 
-The supplied same-PC Dolphin fixture uses `127.0.0.1` on both guests. Physical Wiis need the host’s LAN address. Set `"trace": "on"` inside `network` to record test events.
+The supplied same-PC Dolphin fixture uses `127.0.0.1` on both guests. On physical Wiis, set both local bind addresses and set B’s `host` to A’s LAN address. Set `"trace": "on"` inside `network` to record test events. [Hardware acceptance and evidence](docs/hardware-acceptance.md)
 
 ## Exercise both guests
 

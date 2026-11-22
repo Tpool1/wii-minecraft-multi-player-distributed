@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "../../source/game/session_metrics.h"
+#include "../../source/network/lan_pacing.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -21,6 +22,8 @@ static int contains(const char *path, const char *text) {
     return found;
 }
 int main(void) {
+    assert(lan_tick_wait_ms(0) == 50 && lan_tick_wait_ms(8) == 42);
+    assert(lan_tick_wait_ms(49) == 1 && lan_tick_wait_ms(50) == 1 && lan_tick_wait_ms(600) == 1);
     session_metrics_enable(false);
     session_metrics_tick(at(0), at(4));
     assert(!fopen("metrics00/tick.csv", "rb"));

@@ -185,6 +185,21 @@ def build(output):
         staged.rename(output)
 
 
+def metrics(image):
+    """Read completed telemetry windows from an unmounted card, verbatim."""
+    result = {}
+    with PyFatFS(str(image), read_only=True) as card:
+        for run in sorted(card.listdir(APP)):
+            if not re.fullmatch(r"metrics[0-9]{2}", run, re.IGNORECASE):
+                continue
+            result[run] = {}
+            for name in ("frame.csv", "tick.csv", "memory.csv"):
+                path = f"{APP}/{run}/{name}"
+                if card.isfile(path):
+                    result[run][name] = card.readbytes(path).decode("ascii").splitlines()
+    print(json.dumps(result, indent=2))
+
+
 def inspect(image):
     with PyFatFS(str(image),read_only=True) as card:
         report = {"role":json.loads(card.readbytes(APP+"/config.json"))["network"]["role"],
@@ -205,11 +220,13 @@ def inspect(image):
 
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["build","inspect"])
+    parser.add_argument("action", choices=["build","inspect","metrics"])
     parser.add_argument("path", type=Path)
     args=parser.parse_args()
     if args.action=="build":
         build(args.path)
+    elif args.action=="metrics":
+        metrics(args.path)
     else:
         inspect(args.path)
 

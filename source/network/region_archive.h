@@ -34,6 +34,7 @@ struct region_archive {
 	uint32_t* offsets;
 	uint32_t* occupied_sorted;
 	size_t occupied_index;
+	bool needs_refresh;
 	string_t file_name;
 	ILIST_INTERFACE(ilist_regions, struct region_archive);
 };

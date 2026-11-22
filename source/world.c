@@ -20,6 +20,7 @@
 #include <assert.h>
 
 #include "game/game_state.h"
+#include "game/session_trace.h"
 #include "lighting.h"
 #include "platform/gfx.h"
 #include "world.h"
@@ -319,6 +320,15 @@ static void world_light_set_light(void* user, w_coord_t x, w_coord_t y,
 	chunk_set_light(c, W2C_COORD(x), W2C_COORD(y), W2C_COORD(z), light);
 }
 
+void world_apply_block(struct world *w, w_coord_t x, w_coord_t y, w_coord_t z, struct block_data block) {
+	struct world_modification_entry update = { .x=x, .y=y, .z=z, .blk=block };
+	world_set_block(w, x, y, z, block, false);
+	lighting_update_at_block(update, false, world_light_get_block, world_light_set_light, w);
+	if(session_trace_enabled())
+		session_trace("BLOCK x=%d y=%d z=%d type=%u", (int)x, (int)y, (int)z,
+			(unsigned)world_get_block(w, x, y, z).type);
+}
+
 void world_update_lighting(struct world* w) {
 	assert(w);
 
@@ -328,9 +338,7 @@ void world_update_lighting(struct world* w) {
 	struct world_modification_entry source;
 	stack_pop(&w->lighting_updates, &source);
 
-	world_set_block(w, source.x, source.y, source.z, source.blk, false);
-	lighting_update_at_block(source, false, world_light_get_block,
-							 world_light_set_light, w);
+	world_apply_block(w, source.x, source.y, source.z, source.blk);
 }
 
 struct chunk* world_find_chunk_neighbour(struct world* w, struct chunk* c,

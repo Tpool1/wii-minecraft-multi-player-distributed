@@ -9,11 +9,17 @@ param(
     [switch]$Play,
     [switch]$Offline,
     [switch]$LegacyControl,
+    [switch]$Cold,
+    [switch]$Traverse,
+    [switch]$AvatarView,
     [ValidateRange(10,600)][int]$TimeoutSeconds = 120
 )
 
 $ErrorActionPreference = 'Stop'
 if ($LegacyControl) { $Offline=$true }
+if ($AvatarView -and ($Traverse -or $Cold -or $Offline -or $Play)) { throw '-AvatarView uses a dedicated pair.' }
+if ($Traverse -and ($Cold -or $Offline -or $Play)) { throw '-Traverse requires a dedicated automated pair.' }
+if ($Cold -and ($Offline -or $Play)) { throw '-Cold requires an automated two-player run.' }
 if (!$Offline -and !$PeerCard) { throw 'Supply a peer SD card for two-player mode.' }
 if ($Play -and $Offline) { throw 'Use -Play for a two-player session, or -Offline for the control test.' }
 $gamePath = (Resolve-Path -LiteralPath $Game).Path
@@ -26,7 +32,7 @@ $root = [IO.Directory]::CreateDirectory([IO.Path]::GetFullPath($OutputRoot)).Ful
 $runId = 'run-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmssZ') + '-' + [guid]::NewGuid().ToString('N').Substring(0,6)
 $run = [IO.Directory]::CreateDirectory((Join-Path $root $runId)).FullName
 Write-Host "Run directory $run"
-$mode = if ($LegacyControl) { 'legacy-control' } elseif ($Offline) { 'offline' } elseif ($Play) { 'play' } else { 'automated' }
+$mode = if ($AvatarView) { 'avatar' } elseif ($Traverse) { 'traverse' } elseif ($LegacyControl) { 'legacy-control' } elseif ($Offline) { 'offline' } elseif ($Play) { 'play' } else { 'automated' }
 $record = [ordered]@{ utc = [DateTime]::UtcNow.ToString('o'); mode=$mode; game=$gamePath
     gameSHA256=(Get-FileHash -LiteralPath $gamePath).Hash; dolphin=$dolphinPath
     dolphinSHA256=(Get-FileHash -LiteralPath $dolphinPath).Hash; machine=$env:COMPUTERNAME
@@ -103,6 +109,23 @@ IOS_NET = False
         # A held Z allows digging to complete and prepares a new visible face for later C presses.
         $map['Nunchuk/Buttons/Z'] = '(timer(32.0) > 0.45) & (timer(32.0) < 0.92)'
         if ($Offline) { $map['Buttons/A'] = Test-Pulse '0.04' '0.09' }
+        if ($Cold -and $role -eq 'A') {
+            # Real Home then Wii Remote 1 selects Save & quit in the in-game menu.
+            $map['Buttons/Home'] = '(timer(200.0) > 0.48) & (timer(200.0) < 0.49)'
+            $map['Buttons/1'] = '(timer(200.0) > 0.50) & (timer(200.0) < 0.51)'
+        }
+    }
+    if ($AvatarView) {
+        foreach ($key in @($map.Keys)) { $map[$key]='0' }
+        $stick = if ($role -eq 'A') { 'Nunchuk/Stick/Left' } else { 'Nunchuk/Stick/Right' }
+        $map[$stick] = '(timer(200.0) > 0.08) & (timer(200.0) < 0.084)'
+    }
+    if ($Traverse) {
+        foreach ($key in @($map.Keys)) { $map[$key]='0' }
+        $out = if ($role -eq 'A') { 'D-Pad/Left' } else { 'D-Pad/Right' }
+        $back = if ($role -eq 'A') { 'D-Pad/Right' } else { 'D-Pad/Left' }
+        $map[$out] = '(timer(48.0) > 0.23) & (timer(48.0) < 0.44)'
+        $map[$back] = '(timer(48.0) > 0.67) & (timer(48.0) < 0.88)'
     }
     $remote = @('[Wiimote1]','Device = DInput/0/Keyboard Mouse','Source = 1','Extension = Nunchuk',
         'IR/Up = 0','IR/Down = 0','IR/Left = 0','IR/Right = 0') +
@@ -142,6 +165,15 @@ function Wait-Until($description, $predicate, [int]$seconds) {
     }
     throw "Timed out after $seconds seconds waiting for $description."
 }
+function Wait-HostListener {
+    Wait-Until 'host-owned loopback listener' {
+        $rows = @(netstat.exe -ano -p TCP | Where-Object { $_ -match ('\s+LISTENING\s+' + $guests.A.Id + '\s*$') })
+        if ($rows -match '\s+(?!127\.0\.0\.1:)\S+:45838\s') { throw 'The game opened the test listener outside 127.0.0.1.' }
+        $matched=@($rows -match '\s+127\.0\.0\.1:45838\s')
+        if ($matched.Count) { $record.listener = $matched[0].Trim() }
+        return $matched.Count -gt 0
+    } $TimeoutSeconds
+}
 function Get-Assessment {
     if (!(Test-Path -LiteralPath $logs.A) -or !(Test-Path -LiteralPath $logs.B)) { return $false }
     $report = & $node "$PSScriptRoot/verify-game.cjs" $logs.A $logs.B
@@ -179,13 +211,7 @@ try {
         $record.passed=$true
     } else {
         $step='local host listener'
-        Wait-Until 'host-owned loopback listener' {
-            $rows = @(netstat.exe -ano -p TCP | Where-Object { $_ -match ('\s+LISTENING\s+' + $guests.A.Id + '\s*$') })
-            if ($rows -match '\s+(?!127\.0\.0\.1:)\S+:45838\s') { throw 'The game opened the test listener outside 127.0.0.1.' }
-            $matched=@($rows -match '\s+127\.0\.0\.1:45838\s')
-            if ($matched.Count) { $record.listener = $matched[0].Trim() }
-            return $matched.Count -gt 0
-        } $TimeoutSeconds
+        Wait-HostListener
         Start-Guest 'B'
         $step='renderer windows'
         Wait-Until 'two live render windows' {
@@ -198,7 +224,24 @@ try {
         $record.sourceWindows=$handles
         Write-Record
         Wait-Until 'registered live thumbnails' { Test-Path -LiteralPath "$run/compositor.txt" } 12
-        if ($Play) {
+        if ($AvatarView) {
+            Wait-Until 'both guests received the other avatar' {
+                (Read-GuestLog 'A') -match '\[FCX\] REMOTE slot=1' -and (Read-GuestLog 'B') -match '\[FCX\] REMOTE slot=0'
+            } $TimeoutSeconds
+            Start-Sleep -Seconds 20
+            Set-LocalFile "$run/capture.request" 'avatar-view'
+            Wait-Until 'camera-facing projector capture' { Test-Path -LiteralPath "$run/avatar-view-frames.txt" } 20
+            $record.passed = (Get-Content -LiteralPath "$run/avatar-view-frames.txt" -Raw) -match 'distinctDetailedFrames=True'
+        } elseif ($Traverse) {
+            $step = 'independent travel through disjoint chunk subscriptions'
+            Wait-Until 'two full disjoint subscriptions, bounded residency and observed cross-view travel' {
+                $details = & $node "$PSScriptRoot/verify-traverse.cjs" $logs.A $logs.B 2>$null
+                $result = $LASTEXITCODE
+                if ($details) { Set-LocalFile "$run/traverse.json" ($details -join [Environment]::NewLine) }
+                return $result -eq 0
+            } $TimeoutSeconds
+            $record.passed = $true
+        } elseif ($Play) {
             Write-Host 'The two-player projector is live. F11 toggles fullscreen. Escape closes the projector and its two guests.'
             $projector.WaitForExit()
             $record.passed=$projector.ExitCode -eq 0
@@ -218,19 +261,41 @@ try {
             Stop-OwnedProcess $guests.B
             $guests.Remove('B')
             Wait-Until 'host flushed departing peer' { (Read-GuestLog 'A') -match '\[FCX\] PEER_SAVE ok=1' } 30
-            Copy-Item -LiteralPath $logs.B -Destination "$run/B-first.log"
+            Move-Item -LiteralPath $logs.B -Destination "$run/B-first.log"
             $step='peer rejoin'
             $record.processes.Bfirst=$record.processes.B
-            $originalPeerLog=Read-GuestLog 'B'
-            $logOffset=$originalPeerLog.Length
             Start-Guest 'B'
             Wait-Until 'rejoined peer received slot and local pose' {
                 $contents=Read-GuestLog 'B'
-                # Dolphin can start a new file or append to the old one.
-                if ($contents.Length -ge $logOffset -and $contents.StartsWith($originalPeerLog)) { $contents=$contents.Substring($logOffset) }
                 $contents -match '\[FCX\] READY slot=1' -and $contents -match '\[FCX\] LOCAL slot=1'
             } $TimeoutSeconds
             $record.peerRejoined=$true
+            if ($Cold) {
+                $step='in-game Save and quit'
+                Wait-Until 'host completed the normal Save and quit checkpoint' { (Read-GuestLog 'A') -match '\[FCX\] HOST_SAVE ok=1' } 140
+                foreach ($role in 'B','A') {
+                    Stop-OwnedProcess $guests[$role]
+                    $guests.Remove($role)
+                    Move-Item -LiteralPath $logs[$role] -Destination "$run/$role-before-cold.log"
+                    $remoteConfig=Join-Path $run "$role/Config/WiimoteNew.ini"
+                    $controls=Get-Content -LiteralPath $remoteConfig -Raw
+                    Set-LocalFile $remoteConfig ($controls -replace '(?m)^(.*?=).*timer\([^\r\n]+','$1 0')
+                }
+                $step='cold restart using the same private cards'
+                $record.processes.Afirst=$record.processes.A
+                $record.processes.Bwarm=$record.processes.B
+                Start-Guest 'A'
+                Wait-HostListener
+                Start-Guest 'B'
+                Wait-Until 'both freshly booted clients read saved markers and restored player poses' {
+                    if (!(Test-Path -LiteralPath $logs.A) -or !(Test-Path -LiteralPath $logs.B)) { return $false }
+                    $details = & $node "$PSScriptRoot/verify-cold.cjs" "$run/A-before-cold.log" "$run/B-before-cold.log" $logs.A $logs.B
+                    $status = $LASTEXITCODE
+                    Set-LocalFile "$run/cold.json" ($details -join [Environment]::NewLine)
+                    return $status -eq 0
+                } $TimeoutSeconds
+                $record.coldRestored=$true
+            }
             $record.passed=$true
         }
     }

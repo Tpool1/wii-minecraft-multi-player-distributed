@@ -59,6 +59,8 @@ struct server_player {
 	int spawn_x, spawn_y, spawn_z;
 	float vel_y, old_vel_y;
 	int fall_y;
+	uint64_t movement_tick;
+	double movement_used;
 };
 
 #define LAN_RADIUS 2

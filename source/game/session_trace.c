@@ -40,6 +40,7 @@ distribution.
 #endif
 
 static bool enabled;
+bool session_trace_enabled(void) { return enabled; }
 void session_trace_enable(bool on) { enabled = on; }
 
 void session_trace(const char *format, ...) {

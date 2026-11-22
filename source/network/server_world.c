@@ -90,6 +90,10 @@ void server_world_destroy(struct server_world* w) {
 	}
 
 	dict_server_chunks_clear(w->chunks);
+	for(size_t i=0; i<w->loaded_regions_length; ++i)
+		region_archive_destroy(&w->loaded_regions[i]);
+	w->loaded_regions_length=0;
+	ilist_regions_init(w->loaded_regions_lru);
 	string_clear(w->level_name);
 }
 

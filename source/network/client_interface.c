@@ -18,6 +18,7 @@
 */
 
 #include "client_interface.h"
+#include "client_entities.h"
 #include "../game/game_state.h"
 #include "../particle.h"
 #include "../game/session_trace.h"
@@ -242,14 +243,14 @@ void clin_process(struct client_rpc* call) {
 				});
 			}
 
-			world_set_block(&gstate.world, call->payload.set_block.x,
-							call->payload.set_block.y,
-							call->payload.set_block.z,
-							call->payload.set_block.block, true);
-			session_trace("BLOCK x=%d y=%d z=%d type=%u", (int)call->payload.set_block.x,
-				(int)call->payload.set_block.y, (int)call->payload.set_block.z,
-				(unsigned)world_get_block(&gstate.world, call->payload.set_block.x,
-					call->payload.set_block.y, call->payload.set_block.z).type);
+			if(lan_current_role() == LAN_OFFLINE) {
+				world_set_block(&gstate.world, call->payload.set_block.x, call->payload.set_block.y,
+								call->payload.set_block.z, call->payload.set_block.block, true);
+			} else {
+				// Apply reliable authoritative deltas in arrival order before the next input samples the cell.
+				world_apply_block(&gstate.world, call->payload.set_block.x, call->payload.set_block.y,
+								  call->payload.set_block.z, call->payload.set_block.block);
+			}
 
 			break;
 		case CRPC_HOST_SAVE_RESULT:
@@ -318,32 +319,18 @@ void clin_process(struct client_rpc* call) {
 		    e->teleport(e, call->payload.spawn_minecart.pos);
 		} break;
 
-		case CRPC_PICKUP_ITEM: {
-			if(gstate.local_player
-			   && call->payload.pickup_item.collector_id
-				   == gstate.local_player->id) {
-				struct entity* e = *(dict_entity_get(
-					gstate.entities, call->payload.pickup_item.entity_id));
-				if(e)
-					glm_vec3_copy((vec3) {gstate.camera.x,
-										  gstate.camera.y - 0.2F,
-										  gstate.camera.z},
-								  e->network_pos);
-			}
-		} break;
-		case CRPC_ENTITY_DESTROY:
-			free(*dict_entity_get(gstate.entities,
-							  call->payload.entity_destroy.entity_id));
-			dict_entity_erase(gstate.entities,
-							  call->payload.entity_destroy.entity_id);
-			break;
-		case CRPC_ENTITY_MOVE: {
-			struct entity* e = *(dict_entity_get(
-				gstate.entities, call->payload.entity_move.entity_id));
-			if(e)
-				glm_vec3_copy(call->payload.entity_move.pos, e->network_pos);
-		} break;
-		case CRPC_PLAYER_SET_HEALTH:
+		case CRPC_PICKUP_ITEM:
+            if(gstate.local_player && call->payload.pickup_item.collector_id == gstate.local_player->id)
+                clin_move_known_entity(gstate.entities,call->payload.pickup_item.entity_id,
+                    (vec3){gstate.camera.x,gstate.camera.y-0.2F,gstate.camera.z});
+            break;
+        case CRPC_ENTITY_DESTROY:
+            clin_remove_known_entity(gstate.entities,call->payload.entity_destroy.entity_id,gstate.local_player);
+            break;
+        case CRPC_ENTITY_MOVE:
+            clin_move_known_entity(gstate.entities,call->payload.entity_move.entity_id,call->payload.entity_move.pos);
+            break;
+        case CRPC_PLAYER_SET_HEALTH:
 			if (gstate.local_player) gstate.local_player->health = call->payload.player_set_health.health;
 		break;
 	}

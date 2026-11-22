@@ -11,7 +11,9 @@ function readEvents(log) {
     for (const token of (match[2] || '').matchAll(/(\w+)=([^\s,;]+)/g)) {
       fields[token[1]] = token[2];
     }
-    return [{ event: match[1].toUpperCase(), fields, line: index + 1 }];
+    const time = line.match(/^(\d+):(\d+):(\d+)\s/);
+    const ms = time ? (Number(time[1])*60 + Number(time[2]))*1000 + Number(time[3]) : null;
+    return [{ event: match[1].toUpperCase(), fields, line: index + 1, ms }];
   });
 }
 
@@ -36,7 +38,7 @@ function transferredMotion(local, remote) {
 
 function blocks(events) {
   return events.filter(r => r.event === 'BLOCK').map(r => ({
-    fields:r.fields, line:r.line,
+    fields:r.fields, line:r.line, ms:r.ms,
     values:['x','y','z','type'].map(k => Number(r.fields[k])),
   })).filter(r => r.values.every(Number.isInteger));
 }
@@ -61,9 +63,13 @@ function verify(logA, logB) {
       const xyz = ['x', 'y', 'z'].map(k => Number(edit.fields[k]));
       if (!xyz.every(Number.isInteger)) continue;
       const validType = type => edit.fields.op === 'dig' ? type === 0 : edit.fields.op === 'place' && type > 0;
-      const matches = row => xyz.every((v,i) => v === row.values[i]) && validType(row.values[3]);
-      const host = aBlocks.find(matches);
-      const peer = host && bBlocks.find(row => matches(row) && row.values[3] === host.values[3]);
+      const sameBlock = row => xyz.every((v,i) => v === row.values[i]);
+      const host = aBlocks.find(row => row.line > edit.line && sameBlock(row));
+      if (!host || !validType(host.values[3]) || edit.ms === null) continue;
+      // Same Windows clock in both Dolphin logs. Allow a minute/hour rollover.
+      const elapsed = ms => (ms - edit.ms + 3600000) % 3600000;
+      const peer = bBlocks.find(row => row.ms !== null && elapsed(row.ms) <= 3000 &&
+        sameBlock(row) && row.values[3] === host.values[3]);
       if (peer) {
         confirmed = { edit, values: host.values, hostClientLine: host.line, peerClientLine: peer.line };
         break;

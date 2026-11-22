@@ -128,3 +128,15 @@ static bool net_ready(void) {
 	return true;
 }
 #endif
+#if defined(LAN_TEST_IO) && defined(_WIN32)
+/* Executable tests can stall this process's stream without touching the OS
+ * configuration. */
+int lan_test_send(game_socket fd, const char* p, size_t n, int flags);
+int lan_test_recv(game_socket fd, char* p, size_t n, int flags);
+uint32_t lan_test_clock(void);
+#undef sock_send
+#undef sock_recv
+#define sock_send lan_test_send
+#define sock_recv lan_test_recv
+#define millis lan_test_clock
+#endif

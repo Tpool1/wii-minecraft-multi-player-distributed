@@ -7,6 +7,7 @@ struct config;
 struct world;
 void session_trace_probes(struct config *config);
 void session_trace_column(struct world *world, int x, int y, int z, int sx, int sy, int sz);
+bool session_trace_enabled(void);
 void session_trace_enable(bool enabled);
 void session_trace(const char *format, ...);
 void session_trace_pose(bool remote, int slot, float x, float y, float z);

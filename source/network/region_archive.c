@@ -18,6 +18,9 @@
 */
 
 #include <assert.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <unistd.h>
 #include <m-lib/m-string.h>
 
 #include "../cNBT/nbt.h"
@@ -28,7 +31,7 @@
 #define CHUNK_EXISTS(offset, sectors) ((offset) >= 2 && (sectors) >= 1)
 
 static uint32_t conv_u32_native(uint8_t* data) {
-	return (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
+	return ((uint32_t)data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
 }
 
 static void conv_native_u32(uint32_t in, uint8_t* data) {
@@ -74,14 +77,14 @@ static bool rebuild_occupied_list(struct region_archive* ra) {
 	qsort(ra->occupied_sorted, ra->occupied_index, sizeof(uint32_t),
 		  sort_region_chunks);
 
-	uint32_t prev = 1;
+	uint32_t end = 2;
 	for(size_t k = 1; k < ra->occupied_index; k++) {
 		uint32_t offset = ra->occupied_sorted[k] >> 8;
 
-		if(offset <= prev)
+		if(offset < end)
 			return false;
 
-		prev = offset;
+		end = offset + (ra->occupied_sorted[k] & 0xFF);
 	}
 
 	return true;
@@ -100,20 +103,46 @@ bool region_archive_create_new(struct region_archive* ra, string_t world_name,
 						   string_get_cstr(world_name), x, z);
 	}
 
-	FILE* f = fopen(string_get_cstr(ra->file_name), "w");
+	const char *path = string_get_cstr(ra->file_name);
+	int flags = O_CREAT | O_EXCL | O_WRONLY;
+#ifdef O_BINARY
+	flags |= O_BINARY;
+#endif
+	int fd = open(path, flags, 0666);
+	FILE *f = fd < 0 ? NULL : fdopen(fd, "wb");
 
 	if(!f) {
+		if(fd >= 0) {
+			close(fd);
+			remove(path);
+		}
 		string_clear(ra->file_name);
 		return false;
 	}
-
-	for(size_t k = 0; k < REGION_SIZE * REGION_SIZE * 2; k++)
-		fwrite((uint32_t[]) {0}, sizeof(uint32_t), 1, f);
-
-	fclose(f);
+	static const uint8_t zeros[256] = {0};
+	bool ok = true;
+	for(size_t i = 0; ok && i < 2 * REGION_SECTOR_SIZE; i += sizeof(zeros))
+		ok = fwrite(zeros, sizeof(zeros), 1, f) == 1;
+	if(fclose(f) != 0) ok = false;
+	if(!ok) remove(path);
 	string_clear(ra->file_name);
+	if(!ok) return false;
 
 	return region_archive_create(ra, world_name, x, z, dimension);
+}
+
+/* A failed index close can leave either generation on disk. Refresh before
+ * any subsequent allocation or lookup so a possibly live sector is never reused. */
+static bool load_offsets(struct region_archive *ra) {
+	FILE *f = fopen(string_get_cstr(ra->file_name), "rb");
+	if(!f) return false;
+	bool ok = fread(ra->offsets, sizeof(uint32_t), REGION_SIZE * REGION_SIZE, f)
+		== REGION_SIZE * REGION_SIZE;
+	if(fclose(f) != 0) ok = false;
+	if(!ok) return false;
+	for(size_t i = 0; i < REGION_SIZE * REGION_SIZE; ++i)
+		ra->offsets[i] = conv_u32_native((uint8_t *)(ra->offsets + i));
+	return rebuild_occupied_list(ra);
 }
 
 bool region_archive_create(struct region_archive* ra, string_t world_name,
@@ -144,31 +173,9 @@ bool region_archive_create(struct region_archive* ra, string_t world_name,
 	ra->x = x;
 	ra->z = z;
 
-	FILE* f = fopen(string_get_cstr(ra->file_name), "rb");
-
-	if(!f) {
-		free(ra->offsets);
-		string_clear(ra->file_name);
-		return false;
-	}
-
-	if(!fread(ra->offsets, sizeof(uint32_t) * REGION_SIZE * REGION_SIZE, 1,
-			  f)) {
-		free(ra->offsets);
-		fclose(f);
-		string_clear(ra->file_name);
-		return false;
-	}
-
-	// convert from big endian to native endian
-	for(size_t k = 0; k < REGION_SIZE * REGION_SIZE; k++)
-		ra->offsets[k] = conv_u32_native((uint8_t*)(ra->offsets + k));
-
-	fclose(f);
-
+	ra->needs_refresh = false;
 	ilist_regions_init_field(ra);
-
-	if(!rebuild_occupied_list(ra)) {
+	if(!load_offsets(ra)) {
 		free(ra->offsets);
 		free(ra->occupied_sorted);
 		string_clear(ra->file_name);
@@ -195,6 +202,11 @@ bool region_archive_contains(struct region_archive* ra, w_coord_t x,
 		return false;
 	}
 
+	if(ra->needs_refresh) {
+		if(!load_offsets(ra)) { *chunk_exists = false; return false; }
+		ra->needs_refresh = false;
+	}
+
 	int rx = x & (REGION_SIZE - 1);
 	int rz = z & (REGION_SIZE - 1);
 
@@ -209,7 +221,7 @@ bool region_archive_get_blocks(struct region_archive* ra, w_coord_t x,
 							   w_coord_t z, struct server_chunk* sc) {
 	assert(ra && sc);
 	bool chunk_exists;
-	assert(region_archive_contains(ra, x, z, &chunk_exists) && chunk_exists);
+	if(!region_archive_contains(ra, x, z, &chunk_exists) || !chunk_exists) return false;
 
 	int rx = x & (REGION_SIZE - 1);
 	int rz = z & (REGION_SIZE - 1);
@@ -231,7 +243,7 @@ bool region_archive_get_blocks(struct region_archive* ra, w_coord_t x,
 
 	uint32_t length;
 	if(!fread_u32(&length, f)
-	   || length + sizeof(uint32_t) > sectors * REGION_SECTOR_SIZE) {
+	   || length < 2 || length > sectors * REGION_SECTOR_SIZE - sizeof(uint32_t)) {
 		fclose(f);
 		return false;
 	}
@@ -314,71 +326,57 @@ bool region_archive_get_blocks(struct region_archive* ra, w_coord_t x,
 	return true;
 }
 
-static bool file_overwrite_index(FILE* f, size_t index, uint32_t data) {
-	assert(f);
+/* Keep the prior record referenced until the replacement body and padding have
+ * been closed successfully. The header update is a separate stream/close. */
+static bool store_record(struct region_archive *ra, size_t slot, struct buffer body) {
+	if(!body.len || body.len > 255u * REGION_SECTOR_SIZE - 5u) return false;
+	if(ra->needs_refresh) {
+		if(!load_offsets(ra)) return false;
+		ra->needs_refresh = false;
+	}
+	uint32_t sectors = (body.len + 5 + REGION_SECTOR_SIZE - 1) / REGION_SECTOR_SIZE;
+	uint32_t offset = 0;
+	for(size_t i = 0; i < ra->occupied_index; ++i) {
+		uint32_t entry = ra->occupied_sorted[i];
+		offset = (entry >> 8) + (entry & 0xFF);
+		if(i + 1 == ra->occupied_index || offset + sectors <= (ra->occupied_sorted[i+1] >> 8))
+			break;
+	}
+	if(offset < 2 || offset > 0xFFFFFFu || offset + sectors > LONG_MAX / REGION_SECTOR_SIZE)
+		return false;
+	const char *path = string_get_cstr(ra->file_name);
+	FILE *f = fopen(path, "rb+");
+	if(!f) return false;
+	bool ok = fseek(f, (long)offset * REGION_SECTOR_SIZE, SEEK_SET) == 0
+		&& fwrite_u32(body.len + 1, f) == 1 && fputc(2, f) != EOF
+		&& fwrite(body.data, 1, body.len, f) == body.len;
+	static const uint8_t padding[256] = {0};
+	size_t remain = sectors * REGION_SECTOR_SIZE - body.len - 5;
+	while(ok && remain) {
+		size_t bytes = remain < sizeof(padding) ? remain : sizeof(padding);
+		ok = fwrite(padding, 1, bytes, f) == bytes;
+		remain -= bytes;
+	}
+	if(fclose(f) != 0) ok = false;
+	if(!ok) return false;
 
-	if(fseek(f, index * sizeof(uint32_t), SEEK_SET)) {
-		fclose(f);
+	f = fopen(path, "rb+");
+	if(!f) return false;
+	uint32_t entry = (offset << 8) | sectors;
+	ok = fseek(f, (long)(slot * sizeof(uint32_t)), SEEK_SET) == 0 && fwrite_u32(entry, f) == 1;
+	if(fclose(f) != 0) ok = false;
+	if(!ok) {
+		ra->needs_refresh = true;
 		return false;
 	}
-
-	if(fwrite_u32(data, f) != 1) {
-		fclose(f);
-		return false;
-	}
-
-	return true;
-}
-
-static bool file_overwrite_chunk(FILE* f, size_t offset, void* data,
-								 size_t length, bool pad) {
-	assert(f && data && length > 0);
-
-	if(fseek(f, offset, SEEK_SET)) {
-		fclose(f);
-		return false;
-	}
-
-	if(fwrite_u32(length + 1, f) != 1) {
-		fclose(f);
-		return false;
-	}
-
-	if(fwrite((uint8_t[]) {2}, sizeof(uint8_t), 1, f) != 1) {
-		fclose(f);
-		return false;
-	}
-
-	if(fwrite(data, length, 1, f) != 1) {
-		fclose(f);
-		return false;
-	}
-
-	size_t sectors = (length + REGION_SECTOR_SIZE - 1) / REGION_SECTOR_SIZE
-		* REGION_SECTOR_SIZE;
-
-	if(pad && sectors > length + 5) {
-		for(size_t k = 0; k < sectors - length - 5; k++) {
-			if(fwrite((uint8_t[]) {0}, sizeof(uint8_t), 1, f) != 1) {
-				fclose(f);
-				return false;
-			}
-		}
-	}
-
-	return true;
+	ra->offsets[slot] = entry;
+	return rebuild_occupied_list(ra);
 }
 
 bool region_archive_set_blocks(struct region_archive* ra, w_coord_t x,
 							   w_coord_t z, struct server_chunk* sc) {
 	assert(ra && sc);
 	assert(CHUNK_REGION_COORD(x) == ra->x && CHUNK_REGION_COORD(z) == ra->z);
-
-	FILE* f = fopen(string_get_cstr(ra->file_name), "rb+");
-
-	// early exit
-	if(!f)
-		return false;
 
 	struct nbt_list root_list_sentinel = (struct nbt_list) {
 		.data = NULL,
@@ -476,81 +474,8 @@ bool region_archive_set_blocks(struct region_archive* ra, w_coord_t x,
 	if(!res.data)
 		return false;
 
-	uint32_t new_data_sectors = (res.len + sizeof(uint32_t) + sizeof(uint8_t)
-								 + REGION_SECTOR_SIZE - 1)
-		/ REGION_SECTOR_SIZE;
-
-	int rx = x & (REGION_SIZE - 1);
-	int rz = z & (REGION_SIZE - 1);
-
-	uint32_t offset = ra->offsets[rx + rz * REGION_SIZE] >> 8;
-	uint32_t sectors = ra->offsets[rx + rz * REGION_SIZE] & 0xFF;
-
-	bool success = true;
-
-	if(CHUNK_EXISTS(offset, sectors) && new_data_sectors <= sectors) {
-		// chunk already exists in file and existing space fits new data
-		uint32_t data = (offset << 8) | new_data_sectors;
-		ra->offsets[rx + rz * REGION_SIZE] = data;
-
-		if(success && sectors != new_data_sectors
-		   && !file_overwrite_index(f, rx + rz * REGION_SIZE, data))
-			success = false;
-
-		if(success
-		   && !file_overwrite_chunk(f, offset * REGION_SECTOR_SIZE, res.data,
-									res.len, false))
-			success = false;
-
-	} else {
-		/* append new data at end or insert it in between existing chunks where
-		 * there is enough space left */
-		uint32_t new_offset = 0;
-		bool pad = false;
-
-		for(size_t k = 0; k < ra->occupied_index; k++) {
-			uint32_t off1 = ra->occupied_sorted[k] >> 8;
-			uint32_t sec1 = ra->occupied_sorted[k] & 0xFF;
-
-			// append at end
-			if(k + 1 >= ra->occupied_index) {
-				new_offset = off1 + sec1;
-				pad = true; // mc requires files to be multiples of 4KiB
-				break;
-			}
-
-			uint32_t off2 = ra->occupied_sorted[k + 1] >> 8;
-
-			// insert in between?
-			if(off2 - (off1 + sec1) >= new_data_sectors) {
-				new_offset = off1 + sec1;
-				pad = false;
-				break;
-			}
-		}
-
-		// sanity check, don't overwrite lookup tables at start of file
-		if(new_offset > 0) {
-			uint32_t data = (new_offset << 8) | new_data_sectors;
-			ra->offsets[rx + rz * REGION_SIZE] = data;
-
-			if(success && !file_overwrite_index(f, rx + rz * REGION_SIZE, data))
-				success = false;
-
-			if(success
-			   && !file_overwrite_chunk(f, new_offset * REGION_SECTOR_SIZE,
-										res.data, res.len, pad))
-				success = false;
-		} else {
-			success = false;
-		}
-	}
-
-	// this could be done without resorting the entire list
-	if(success)
-		success = rebuild_occupied_list(ra);
-
-	fclose(f);
+	int rx = x & (REGION_SIZE - 1), rz = z & (REGION_SIZE - 1);
+	bool success = store_record(ra, rx + rz * REGION_SIZE, res);
 	buffer_free(&res);
 	return success;
 }
