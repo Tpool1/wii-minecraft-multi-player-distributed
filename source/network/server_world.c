@@ -195,6 +195,8 @@ bool server_world_set_block(struct server_local* s, w_coord_t x, w_coord_t y, w_
 	if(sc) {
 		size_t idx = S_CHUNK_IDX(x, y, z);
 		sc->modified = true;
+		if(sc->ids[idx] != blk.type)
+			sc->world_tick_inert = false;
 		sc->ids[idx] = blk.type;
 		nibble_write(sc->metadata, idx, blk.metadata);
 
@@ -413,6 +415,11 @@ void server_world_tick(struct server_world* w, struct server_local* s) {
 
     while (!dict_server_chunks_end_p(it)) {
         struct server_chunk* sc   = &dict_server_chunks_ref(it)->value;
+        if (sc->world_tick_inert) {
+            dict_server_chunks_next(it);
+            continue;
+        }
+        bool saw_tickable = false;
         w_coord_t        baseX    = S_CHUNK_X(dict_server_chunks_ref(it)->key) * CHUNK_SIZE;
         w_coord_t        baseZ    = S_CHUNK_Z(dict_server_chunks_ref(it)->key) * CHUNK_SIZE;
 
@@ -423,6 +430,7 @@ void server_world_tick(struct server_world* w, struct server_local* s) {
                     uint8_t id = sc->ids[column + y];
                     if (!tickable[id])
                         continue;
+                    saw_tickable = true;
 
                     struct block_data blk;
                     server_chunk_get_block(sc, cx, y, cz, &blk);
@@ -489,6 +497,7 @@ void server_world_tick(struct server_world* w, struct server_local* s) {
                 }
             }
 
+        sc->world_tick_inert = !saw_tickable;
         dict_server_chunks_next(it);
     }
     session_metrics_world_scan(scan_start, time_get());

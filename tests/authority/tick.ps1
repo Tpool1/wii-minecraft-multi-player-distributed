@@ -1,4 +1,4 @@
-param([string]$Compiler = 'clang', [string]$IncludeDir, [string]$OutputDirectory)
+param([string]$Compiler = 'clang', [string]$IncludeDir, [string]$OutputDirectory, [switch]$InertOnly)
 $ErrorActionPreference='Stop'
 $repo = (Resolve-Path "$PSScriptRoot/../..").Path
 if(!$IncludeDir) { $IncludeDir = "$repo/build/claw/staging/source" }
@@ -14,6 +14,29 @@ function Body([string]$unit, [string]$start) {
 $world = 'network/server_world.c'
 $idx = [regex]::Match((Get-Content "$repo/source/$world" -Raw), '(?m)^#define S_CHUNK_IDX[^\n]*\n[^\n]*').Value
 if(!$idx) { throw 'Missing production chunk layout macro' }
+
+# Use the real loader, setter and regular/random passes. Copy the ID gate into
+# the fixture with a counter; keep this instrument out of the timing fixture
+# and the shipped code. Fail loudly if the storage expression changes.
+$scan = Body $world 'void server_world_tick\('
+$gate = 'sc->ids[column + y]'
+if(!$scan.Contains($gate)) { throw 'Update the raw-ID read counter for the current world scan' }
+$scan = $scan.Replace($gate, '(++id_reads, sc->ids[column + y])')
+$inertBody = $idx, (Body $world 'static bool server_chunk_get_block\('),
+    (Body $world 'bool server_world_get_block\('), (Body 'block/blocks.c' 'void blocks_side_offset\('),
+    (Body $world 'static bool server_world_light_get_block\('), (Body $world 'static void server_world_light_set_light\('),
+    (Body $world 'bool server_world_set_block\('), (Body $world 'bool server_world_is_chunk_loaded\('),
+    (Body $world 'bool server_world_load_chunk\('), $scan, (Body $world 'void server_world_random_tick\('),
+    (Body 'util.c' 'inline uint8_t nibble_read\(').Replace('inline ',''),
+    (Body 'util.c' 'inline void nibble_write\(').Replace('inline ','')
+[IO.File]::WriteAllLines("$OutputDirectory/inert-body.inc",[string[]]$inertBody)
+$inertExe = "$OutputDirectory/inert-tick.exe"
+& $Compiler -std=gnu99 -O2 -DPLATFORM_PC -DCGLM_ALL_UNALIGNED "-I$repo/source" "-I$IncludeDir" "-I$IncludeDir/cglm" "-I$OutputDirectory" "$PSScriptRoot/inert-tick.c" -o $inertExe
+if($LASTEXITCODE) { throw 'inert tick fixture compile failed' }
+& $inertExe 2>&1 | Tee-Object -FilePath "$OutputDirectory/inert-tick.log"
+if($LASTEXITCODE) { throw "inert tick fixture failed (exit $LASTEXITCODE)" }
+if($InertOnly) { return }
+
 $body = $idx, (Body $world 'static bool server_chunk_get_block\('), (Body $world 'bool server_world_get_block\('),
     (Body 'block/blocks.c' 'void blocks_side_offset\('), (Body $world 'void server_world_tick\(')
 [IO.File]::WriteAllLines("$OutputDirectory/tick-body.inc",[string[]]$body)

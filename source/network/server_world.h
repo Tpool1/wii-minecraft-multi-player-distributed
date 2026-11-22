@@ -33,6 +33,7 @@ struct server_chunk {
 	uint8_t* lighting_torch;
 	uint8_t* heightmap;
 	bool modified;
+	bool world_tick_inert; /* A completed scan found no onWorldTick callbacks. */
 };
 
 #define MAX_REGIONS 4
