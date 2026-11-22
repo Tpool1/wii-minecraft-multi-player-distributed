@@ -83,8 +83,9 @@ try {
         $sources += Join-Path $vendor.zlib "$file.c"
     }
     $sources += "$stage/newlib-ctype.c"
+    # GCC 8 records both spellings of the staged path in __FILE__ on Windows.
     $compileFlags = @('-std=gnu99','-O2','-DNDEBUG','-DPLATFORM_WII','-DGEKKO','-mrvl','-mcpu=750','-meabi','-mhard-float',
-        '-ffunction-sections','-fdata-sections',"-I$src","-I$ogc/include","-I$fatInclude","-I$($vendor.zlib)")
+        '-ffunction-sections','-fdata-sections',"-fmacro-prefix-map=$stage=.","-fmacro-prefix-map=$($stage.ToLowerInvariant())=.","-I$src","-I$ogc/include","-I$fatInclude","-I$($vendor.zlib)")
     $units = for ($i = 0; $i -lt $sources.Count; $i++) {
         [pscustomobject]@{ Source = $sources[$i]; Object = (Join-Path $stage "$i.o") }
     }
