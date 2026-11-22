@@ -26,12 +26,15 @@
 
 #ifdef PLATFORM_WII
 #include <fat.h>
+#include <unistd.h>
 #include <gccore.h> 
 #endif
 
 #include "chunk_mesher.h"
 #include "daytime.h"
 #include "game/game_state.h"
+#include "game/session_launch.h"
+#include "game/session_trace.h"
 #include "game/gui/screen.h"
 #include "graphics/gfx_util.h"
 #include "graphics/gui_util.h"
@@ -70,11 +73,9 @@ int main(void) {
 	rand_gen_seed(&gstate.rand_src);
 
 #ifdef PLATFORM_WII
-	fatInitDefault();
-	#ifndef NDEBUG
-		SYS_STDIO_Report(true);
-		SYS_Report("[INIT] STDIO redirection is now active\n");
-	#endif
+	if(fatInitDefault() && access("config.json", F_OK) != 0
+	   && access("sd:/apps/fcavex/config.json", F_OK) == 0)
+		chdir("sd:/apps/fcavex");
 #endif
 
 	config_create(&gstate.config_user, "config.json");
@@ -86,8 +87,6 @@ int main(void) {
 
 	recipe_init();
 	gfx_setup();
-
-	screen_set(&screen_select_world);
 
 	world_create(&gstate.world);
 
@@ -104,8 +103,31 @@ int main(void) {
 	gstate.in_water = false;
 	gstate.oxygen = MAX_OXYGEN;
 
+	const char *world = config_read_string(&gstate.config_user, "network.world", NULL);
+	struct session_launch launch = session_launch_plan(
+		config_read_string(&gstate.config_user, "network.role", NULL),
+		config_read_string(&gstate.config_user, "network.port", NULL), world);
+	session_trace_enable(!strcmp(config_read_string(&gstate.config_user, "network.trace", ""), "on"));
+	bool configured = launch.screen != LAUNCH_ERROR &&
+		lan_configure(launch.role, config_read_string(&gstate.config_user, "network.bind", "127.0.0.1"),
+					  config_read_string(&gstate.config_user, "network.host", "127.0.0.1"), launch.port);
 	struct server_local server;
-	server_local_create(&server);
+	if(!configured) {
+		screen_load_error("Check network settings in config.json");
+	} else if(launch.screen == LAUNCH_JOIN) {
+		screen_set(&screen_load_world);
+	} else {
+		server_local_create(&server);
+		if(launch.screen == LAUNCH_SELECT_WORLD) {
+			screen_set(&screen_select_world);
+		} else {
+			struct server_rpc rpc = { .type = SRPC_LOAD_WORLD };
+			string_init_set_str(rpc.payload.load_world.name, world);
+			svin_rpc_send(&rpc);
+			screen_set(&screen_load_world);
+		}
+	}
+	session_trace("BOOT role=%d configured=%d", (int)launch.role, (int)configured);
 
 	ptime_t last_frame = time_get();
 	ptime_t last_tick = last_frame;
@@ -139,6 +161,8 @@ int main(void) {
 		if(gstate.local_player)
 			camera_attach(&gstate.camera, gstate.local_player, tick_delta,
 							gstate.stats.dt);
+		if(gstate.world_loaded && gstate.local_player)
+			session_trace_pose(false, lan_current_role() == LAN_PEER, gstate.camera.x, gstate.camera.y, gstate.camera.z);
 		// update particle‐system with current camera pos for spawn‐culling
 		particle_set_camera((vec3){
 		    gstate.camera.x,

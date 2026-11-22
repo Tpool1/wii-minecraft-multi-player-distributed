@@ -20,6 +20,8 @@
 #include "client_interface.h"
 #include "../game/game_state.h"
 #include "../particle.h"
+#include "../game/session_trace.h"
+#include "lan_transport.h"
 #include "../platform/thread.h"
 #include "server_interface.h"
 
@@ -104,6 +106,8 @@ void clin_process(struct client_rpc* call) {
 					(vec3) {call->payload.player_pos.position[0],
 							call->payload.player_pos.position[1],
 							call->payload.player_pos.position[2]});
+			if(!gstate.world_loaded)
+				session_trace("READY slot=%d", lan_current_role() == LAN_PEER);
 			gstate.world_loaded = true;
 			break;
 		case CRPC_WORLD_RESET:
@@ -241,8 +245,37 @@ void clin_process(struct client_rpc* call) {
 							call->payload.set_block.y,
 							call->payload.set_block.z,
 							call->payload.set_block.block, true);
+			session_trace("BLOCK x=%d y=%d z=%d type=%u", (int)call->payload.set_block.x,
+				(int)call->payload.set_block.y, (int)call->payload.set_block.z,
+				(unsigned)world_get_block(&gstate.world, call->payload.set_block.x,
+					call->payload.set_block.y, call->payload.set_block.z).type);
 
 			break;
+		case CRPC_REMOTE_PLAYER: {
+			const uint32_t id = call->payload.remote_player.entity_id;
+			struct entity **entry = dict_entity_get(gstate.entities, id);
+			if(!call->payload.remote_player.present) {
+				if(entry && *entry && (*entry)->type == ENTITY_REMOTE_PLAYER) {
+					free(*entry);
+					dict_entity_erase(gstate.entities, id);
+				}
+				break;
+			}
+			float *position = call->payload.remote_player.position;
+			if(!entry) {
+				struct entity *remote = calloc(1, sizeof *remote);
+				if(!remote) break;
+				entity_remote_player(id, remote, &gstate.world);
+				remote->teleport(remote, position);
+				entry = dict_entity_safe_get(gstate.entities, id);
+				*entry = remote;
+			}
+			if(!*entry || (*entry)->type != ENTITY_REMOTE_PLAYER) break;
+			glm_vec3_copy(position, (*entry)->network_pos);
+			glm_vec2_copy(call->payload.remote_player.rotation, (*entry)->orient);
+			session_trace_pose(true, lan_current_role() == LAN_HOST, position[0], position[1], position[2]);
+			break;
+		}
 		case CRPC_SPAWN_ITEM: {
 			struct entity** e_ptr = dict_entity_safe_get(
 				gstate.entities, call->payload.spawn_item.entity_id);

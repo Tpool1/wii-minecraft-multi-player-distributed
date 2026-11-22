@@ -22,6 +22,7 @@
 #include "../../graphics/gui_util.h"
 #include "../../graphics/render_model.h"
 #include "../../network/server_interface.h"
+#include "../../network/lan_transport.h"
 #include "../../platform/gfx.h"
 #include "../../platform/input.h"
 #include "../../platform/time.h"
@@ -44,18 +45,20 @@ static void screen_pause_reset(struct screen* s, int width, int height) {
 
 static void screen_pause_update(struct screen* s, float dt) {
 	if(input_pressed(IB_HOME)) {
-		svin_rpc_send(&(struct server_rpc) {
-			.type = SRPC_TOGGLE_PAUSE,
-		});
+		if(gstate.paused)
+			svin_rpc_send(&(struct server_rpc) { .type = SRPC_TOGGLE_PAUSE });
 		gstate.paused = false;
 
 		screen_set(&screen_ingame);
 	}
 
 	if(input_pressed(IB_INVENTORY)) {
-		svin_rpc_send(&(struct server_rpc) {
-			.type = SRPC_TOGGLE_PAUSE,
-		});
+		if(lan_current_role() == LAN_PEER) {
+			gstate.quit = true;
+			return;
+		}
+		if(gstate.paused)
+			svin_rpc_send(&(struct server_rpc) { .type = SRPC_TOGGLE_PAUSE });
 		gstate.paused = false;
 
 		screen_set(&screen_select_world);
@@ -71,11 +74,11 @@ static void screen_pause_render2D(struct screen* s, int width, int height) {
 	gutil_texquad_col(0, 0, 0, 0, 0, 0, width, height, 0, 0, 0, 180);
 	gfx_texture(true);
 
-	gutil_text(4, 4 + (GFX_GUI_SCALE * 8 + 1) * 0, "PAUSED", GFX_GUI_SCALE * 8, true);
+	gutil_text(4, 4 + (GFX_GUI_SCALE * 8 + 1) * 0, lan_current_role() == LAN_OFFLINE ? "PAUSED" : "Game menu", GFX_GUI_SCALE * 8, true);
 
 	int icon_offset = GFX_GUI_SCALE * 16;
 	icon_offset += gutil_control_icon(icon_offset, IB_HOME, "Back to game");
-	icon_offset += gutil_control_icon(icon_offset, IB_INVENTORY, "Save & quit");
+	icon_offset += gutil_control_icon(icon_offset, IB_INVENTORY, lan_current_role() == LAN_PEER ? "Disconnect" : "Save & quit");
 }
 
 struct screen screen_pause = {

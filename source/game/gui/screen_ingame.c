@@ -26,6 +26,7 @@
 #include "../../graphics/render_model.h"
 #include "../../network/server_interface.h"
 #include "../../network/server_local.h"
+#include "../../network/lan_transport.h"
 #include "../../particle.h"
 #include "../../platform/gfx.h"
 #include "../../platform/input.h"
@@ -401,11 +402,9 @@ static void screen_ingame_update(struct screen* s, float dt) {
 
 	if(input_pressed(IB_HOME)) {
 		screen_set(&screen_pause);
-		gstate.paused = true;
-
-		svin_rpc_send(&(struct server_rpc) {
-			.type = SRPC_TOGGLE_PAUSE,
-		});
+		gstate.paused = lan_current_role() == LAN_OFFLINE;
+		if(gstate.paused)
+			svin_rpc_send(&(struct server_rpc) { .type = SRPC_TOGGLE_PAUSE });
 	}
 
 	if(input_pressed(IB_INVENTORY))

@@ -20,9 +20,17 @@
 #include "../../graphics/gui_util.h"
 #include "../../graphics/gfx_settings.h"
 #include "../../network/server_local.h"
+#include "../../network/lan_transport.h"
 #include "../../platform/gfx.h"
 #include "../../platform/input.h"
 #include "../game_state.h"
+
+static const char *load_error;
+
+void screen_load_error(const char *message) {
+	load_error = message;
+	screen_set(&screen_load_world);
+}
 
 static void screen_lworld_reset(struct screen* s, int width, int height) {
 	input_pointer_enable(false);
@@ -32,15 +40,19 @@ static void screen_lworld_reset(struct screen* s, int width, int height) {
 }
 
 static void screen_lworld_update(struct screen* s, float dt) {
-	if(gstate.world_loaded)
+	if((load_error || lan_current_role() == LAN_PEER) && input_pressed(IB_HOME))
+		gstate.quit = true;
+	if(!load_error && gstate.world_loaded)
 		screen_set(&screen_ingame);
 }
 
 static void screen_lworld_render2D(struct screen* s, int width, int height) {
 	gutil_bg();
 
-	gutil_text((width - gutil_font_width("Generating level", 8 * GFX_GUI_SCALE)) / 2,
-			   height / 2 - 20 * GFX_GUI_SCALE, "Generating level", 8 * GFX_GUI_SCALE, true);
+	const char *title = load_error ? load_error
+		: lan_current_role() == LAN_PEER ? lan_status() : "Loading level";
+	gutil_text((width - gutil_font_width(title, 8 * GFX_GUI_SCALE)) / 2,
+			   height / 2 - 20 * GFX_GUI_SCALE, title, 8 * GFX_GUI_SCALE, true);
 
 	gutil_text((width - gutil_font_width("Building terrain", 8 * GFX_GUI_SCALE)) / 2,
 			   height / 2 + 4 * GFX_GUI_SCALE, "Building terrain", 8 * GFX_GUI_SCALE, true);

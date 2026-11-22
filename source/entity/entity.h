@@ -32,7 +32,8 @@ enum entity_type {
 	ENTITY_LOCAL_PLAYER,
 	ENTITY_ITEM,
 	ENTITY_MONSTER,
-	ENTITY_MINECART
+	ENTITY_MINECART,
+	ENTITY_REMOTE_PLAYER
 };
 
 enum ai_state {
@@ -125,6 +126,7 @@ DICT_DEF2(dict_entity, uint32_t, M_BASIC_OPLIST, struct entity*, M_POD_OPLIST)
 #include "../world.h"
 
 void entity_local_player(uint32_t id, struct entity* e, struct world* w);
+void entity_remote_player(uint32_t id, struct entity *e, struct world *world);
 bool entity_local_player_block_collide(vec3 pos, struct block_info* blk_info);
 
 void entity_item(uint32_t id, struct entity* e, bool server, void* world,

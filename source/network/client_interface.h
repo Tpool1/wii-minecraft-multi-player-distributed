@@ -44,6 +44,7 @@ enum client_rpc_type {
 	CRPC_PLAYER_SET_HEALTH,
 	CRPC_SPAWN_MONSTER,
 	CRPC_SPAWN_MINECART,
+	CRPC_REMOTE_PLAYER,
 };
 
 struct client_rpc {
@@ -99,6 +100,12 @@ struct client_rpc {
 			int monster_id;
 			vec3 pos;
 		} spawn_monster;
+		struct {
+			uint32_t entity_id;
+			bool present;
+			vec3 position;
+			vec2 rotation;
+		} remote_player;
 		struct {
 		    uint32_t entity_id;
 		    vec3    pos;
