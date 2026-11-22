@@ -50,3 +50,32 @@ Press F11 in the projector for fullscreen. To save A's world, press H and then G
 - Use the fixture inspector on the **closed** host and peer cards to corroborate block values, positions, inventories, and the peer sidecar. Hardware LAN behavior, real controller routing, audio quality and physical scan-out timing require real Wii tests.
 
 See the [fixture builder](../../tools/multiplayer_fixture/README.md) and [hardware acceptance procedure](../../docs/hardware-acceptance.md).
+
+### Check the 40 ms traversal target
+
+From the repository root, point `$run` at a completed `-Traverse` run made with fresh fixture cards. The closed host card contains one boot's timing data. Each row summarizes 100 ticks. The check compares the worst per-window p95 for tick work against 40 ms in windows that include both loading (bit 2) and paired play (bit 8). It also reports the worst paired-only window (mask 8). These phase bits record activity. The separate `traverse.json` records whether the players reached disjoint subscriptions.
+
+~~~powershell
+$run = 'C:/path/to/completed-traverse-run'
+$ErrorActionPreference = 'Stop'
+$meta = Get-Content -LiteralPath "$run/run.json" -Raw | ConvertFrom-Json
+$travel = Get-Content -LiteralPath "$run/traverse.json" -Raw | ConvertFrom-Json
+if ($meta.mode -ne 'traverse' -or !$meta.passed -or !$travel.passed) { throw 'A successful Traverse run is required.' }
+$json = & python ./tools/multiplayer_fixture/make_fixture.py metrics "$run/A/Load/WiiSD.raw"
+if ($LASTEXITCODE) { throw 'Host card metrics read failed.' }
+$boots = $json -join "`n" | ConvertFrom-Json -AsHashtable
+if ($boots.Count -ne 1) { throw 'Cannot identify a single Traverse boot on this card.' }
+$boot = @($boots.Keys)[0]
+$work = @($boots[$boot]['tick.csv'] | ConvertFrom-Csv | Where-Object series -eq 'tick_work_ms')
+if (!$work.Count -or @($work | Where-Object { $_.n -ne '100' -or $_.p95 -notmatch '^\d+$' -or $_.phase_bits -notmatch '^([1-9]|1[0-5])$' }).Count) {
+    throw 'Missing or invalid 100-tick work samples with phase masks.'
+}
+$byP95 = $work | Sort-Object { [int]$_.p95 } -Descending
+$paired = $byP95 | Where-Object phase_bits -eq '8' | Select-Object -First 1
+$mixed = $byP95 | Where-Object { ([int]$_.phase_bits -band 10) -eq 10 } | Select-Object -First 1
+if (!$paired -or !$mixed) { throw 'Both paired-only and mixed loading/paired windows are required.' }
+"Paired-only p95 $($paired.p95) ms. Mixed p95 $($mixed.p95) ms in window $($mixed.window)."
+if ([int]$mixed.p95 -gt 40) { throw 'Mixed tick-work p95 exceeded 40 ms.' }
+~~~
+
+The original CLAW traversal returned 14 ms paired-only and 43 ms in mixed window 7. The final guard intentionally fails on that evidence.
