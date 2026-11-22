@@ -10,6 +10,25 @@ This run qualifies one pair of consoles, controllers, network and display chain.
 | Wii software in Dolphin | Separate role logs, `run.json`, `gameplay.json`, projector captures and cold-restart results where recorded | Emulated guests executing the named Wii build. The Windows projector composites two DWM surfaces. The runner sets Dolphin volume to 75 for A and 0 for B. These settings alone do not establish physical sound or video timing. |
 | Physical Wii A and B | Both SD logs, LAN observations, capture settings and synchronized TV recording | Controller pairing, real heap behavior, wireless/wired link, video resets, audio selection and measured input-to-screen delay. Run H01–H04 below. |
 
+### Current traversal result on claw
+
+Five independent two-guest runs repeated the same route with each build. Each run began with 25 shared columns and ended with two disjoint 25-column views. The values below are the largest 100-update host tick-work p95 observed in each run for phase mask 10 (loading and paired play). The 40 ms proposed H01 software threshold applies per run. Mask-8 observations in this route cover fully loaded play at the shared start.
+
+| Windows Dolphin 2609b on claw | Mixed p95 values (ms) | Runs within 40 ms | Paired-start p95 |
+|---|---|---:|---:|
+| Previous executable, ELF `c9f8da63` | 38, 42, 42, 41, 40 | 2/5 | 14 ms |
+| Revised executable, ELF `b5836997` | 11, 11, 9, 10, 11 | 5/5 | 2 ms |
+
+The host now skips regular world ticks for columns it has fully scanned and found inactive. Changing a block type permits a fresh scan. Active columns keep their callback order. The revised runs recorded no dropped allocation observations or failed tracked requests. The seven block types in the generated fixture have no regular tick callback. Measure callback-heavy worlds, a sustained 50-column hold and retail Wii timing separately.
+
+Two clean local checkouts built commit `bda77363f243eec8dd88fd8d7d54ceb1bd2dca6d` under different absolute paths. Both produced ELF SHA-256 `b5836997f983acede4a8554f60e72503f51fb5dbc5e6ae5f5fb5c514c12ad320` and DOL SHA-256 `88f1ea0221220cb23691349f0c93800f6bc5b4b8f83937b38379856404029163`. All seven native groups and three fixture tests passed. The `fcavex-performance-review.zip` delivery contains tick CSVs and a standalone replay under `performance/`, clean build certificates under `build/`, and the failing and passing native tests under `regression/`. [Read a fresh traversal's timing windows](../tests/e2e/README.md#check-the-40-ms-traversal-target)
+
+The revised DOL ran both real guest instances in Dolphin. Both clients observed player movement and block edits in both directions. After an in-game save and a full restart, the two new guests read identical values at all four test locations. A 300.124-second paired run had zero unexpected disconnects and retained its host and projector through ten deliberate peer relaunches. Complete per-scenario results and closed-card observations are in the review archive under `gameplay/`.
+
+The two FAT16 allocation-table copies matched on the original template cards. After travel, the closed images differed in 19 entries on A and 6 on B. The read-only inspector used the first table. For H01, record mirror status separately from game-level save recovery. A successful restart establishes that the game could read the checkpoint. Physical SD recovery after power loss needs its own test.
+
+### Earlier gameplay verification
+
 The original `fcavex-gameplay-verification.zip` delivery contains selected evidence from the following disposable runs. Each directory has a `run.json` that identifies the executable, emulator, input SDs and verdict. The full SD images stay on claw.
 
 | Run on claw | Directory inside the archive |

@@ -53,7 +53,7 @@ See the [fixture builder](../../tools/multiplayer_fixture/README.md) and [hardwa
 
 ### Check the 40 ms traversal target
 
-From the repository root, point `$run` at a completed `-Traverse` run made with fresh fixture cards. The closed host card contains one boot's timing data. Each row summarizes 100 ticks. The check compares the worst per-window p95 for tick work against 40 ms in windows that include both loading (bit 2) and paired play (bit 8). It also reports the worst paired-only window (mask 8). These phase bits record activity. The separate `traverse.json` records whether the players reached disjoint subscriptions.
+From the repository root, point `$run` at a completed `-Traverse` run made with fresh fixture cards. The closed host card contains one boot's timing data. Each row summarizes 100 ticks. The check compares the worst per-window p95 for tick work against 40 ms in windows containing exactly loading and paired play (mask 10). It also reports the worst paired-only window (mask 8). Each tick contributes its completion state to the mask. The separate `traverse.json` records whether the players reached disjoint subscriptions.
 
 ~~~powershell
 $run = 'C:/path/to/completed-traverse-run'
@@ -72,7 +72,7 @@ if (!$work.Count -or @($work | Where-Object { $_.n -ne '100' -or $_.p95 -notmatc
 }
 $byP95 = $work | Sort-Object { [int]$_.p95 } -Descending
 $paired = $byP95 | Where-Object phase_bits -eq '8' | Select-Object -First 1
-$mixed = $byP95 | Where-Object { ([int]$_.phase_bits -band 10) -eq 10 } | Select-Object -First 1
+$mixed = $byP95 | Where-Object phase_bits -eq '10' | Select-Object -First 1
 if (!$paired -or !$mixed) { throw 'Both paired-only and mixed loading/paired windows are required.' }
 "Paired-only p95 $($paired.p95) ms. Mixed p95 $($mixed.p95) ms in window $($mixed.window)."
 if ([int]$mixed.p95 -gt 40) { throw 'Mixed tick-work p95 exceeded 40 ms.' }

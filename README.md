@@ -8,13 +8,15 @@ Two players share a block world. The host Wii simulates the world and owns the s
 
 The two-player mode streams existing terrain within two columns of each player. Each Wii draws one view and the other player’s avatar. Both players can move, choose a hotbar slot, mine and place stone, cobblestone, dirt, grass, planks, sand and gravel. Mining credits the acting player’s inventory. The host saves both players and the shared terrain. A returning peer receives a fresh snapshot.
 
+The host checks the observed block type before accepting an edit. If a block disappears and the same type returns before the edit arrives, the request can still match. Distinguishing successive replacements would require a per-cell revision. [Edit and conflict tests](tests/wire/README.md)
+
 Use offline mode for crafting, container interactions, combat and the full inherited entity behavior. The LAN peer does not receive a complete simulation of mobs or minecarts. The two-player build uses one fixed peer slot, trusted private IPv4 and prebuilt region files. Windows Dolphin is the tested configuration. Physical Wii model, SD, controller, LAN and display-chain acceptance are tracked separately. [Hardware acceptance](docs/hardware-acceptance.md)
 
 ## Build the Wii game on Windows
 
 Use PowerShell 7, Windows `tar.exe`, a native C compiler and a Wii toolchain. The lab SDK contains `devkitPPC/bin/powerpc-eabi-gcc.exe` (r35) and `libogc/{include,lib/wii}` (1.8.19). The build script fetches the pinned dependencies, checks each archive’s SHA-256 and builds both the game and the ELF-to-DOL converter.
 
-The tested Windows SDK used the archives below. Extract them so that `devkitPPC/bin` and `libogc/include` share the SDK parent shown above. Check the archive hashes before building. Compatibility with newer SDKs is unverified.
+The tested Windows SDK used the archives below. Extract them so that `devkitPPC/bin` and `libogc/include` share the SDK parent shown above. Check the archive hashes before building. Compatibility with newer SDKs is unverified. [devkitPro toolchains and libogc](https://github.com/devkitPro)
 
 | Archive | SHA-256 |
 |---|---|
