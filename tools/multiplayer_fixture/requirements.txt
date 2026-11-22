@@ -1,0 +1,7 @@
+Pillow>=9
+numpy>=1.26
+nbtlib==2.0.4
+pyfatfs==1.1.0
+# PyFilesystem2 imports pkg_resources, which setuptools 81 removed.
+setuptools>=68,<81
+
