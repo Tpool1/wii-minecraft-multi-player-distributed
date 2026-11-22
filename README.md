@@ -14,6 +14,13 @@ Use offline mode for crafting, container interactions, combat and the full inher
 
 Use PowerShell 7, Windows `tar.exe`, a native C compiler and a Wii toolchain. The lab SDK contains `devkitPPC/bin/powerpc-eabi-gcc.exe` (r35) and `libogc/{include,lib/wii}` (1.8.19). The build script fetches the pinned dependencies, checks each archive’s SHA-256 and builds both the game and the ELF-to-DOL converter.
 
+The tested Windows SDK used the archives below. Extract them so that `devkitPPC/bin` and `libogc/include` share the SDK parent shown above. Check the archive hashes before building. Compatibility with newer SDKs is unverified.
+
+| Archive | SHA-256 |
+|---|---|
+| `devkitPPC_r35-win64.tar.xz` | `28b1e59ea4b617bd569631f832d4e4eb2a697c884ffe44ab7430d6d9e99f1798` |
+| `libogc-1.8.19.tar.bz2` | `e0c4680e6639b203148c2ce6a165c260c50cba600e63ed4b091e186067373de4` |
+
 In the repository root, set `FCAVEX_SDK` to the SDK directory and `CC` to the native compiler executable. Then run
 
 ```powershell
@@ -21,7 +28,7 @@ In the repository root, set `FCAVEX_SDK` to the SDK directory and `CC` to the na
 .\tests\run.ps1 -Compiler $env:CC
 ```
 
-The build writes `boot.dol`, `boot.elf` and `boot.map` under `build/claw/`. Its GCC settings use GNU99, `-O2` and section garbage collection. Historical release binaries used a different build configuration. Native tests reuse the staged source tree. To reuse another build's dependencies, pass its `build/claw/staging/source` directory to the test runner with `-IncludeDir`. This directory contains the game headers and `cglm/`, `cNBT/` and `m-lib/`.
+After a successful build, the script prints the new hashes and writes `boot.dol`, `boot.elf` and `boot.map` under `build/claw/`. Its GCC settings use GNU99, `-O2` and section garbage collection. Historical release binaries used a different build configuration. Native tests reuse the staged source tree. To reuse another build's dependencies, pass its `build/claw/staging/source` directory to the test runner with `-IncludeDir`. This directory contains the game headers and `cglm/`, `cNBT/` and `m-lib/`.
 
 On claw the native compiler is Clang 23.1.6. To reproduce it, unpack `llvm-mingw-20261117-ucrt-x86_64.zip` and set `CC` to its `bin/clang.exe`. The release SHA-256 is `4d002e330a0f703625aa5ccbc37e96f8f824413e163bfc7336774aabd2c3a412`. [Compiler release](https://github.com/mstorsjo/llvm-mingw/releases/tag/20261117)
 

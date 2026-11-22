@@ -10,6 +10,17 @@ This run qualifies one pair of consoles, controllers, network and display chain.
 | Wii software in Dolphin | Separate role logs, `run.json`, `gameplay.json`, projector captures and cold-restart results where recorded | Emulated guests executing the named Wii build. The Windows projector composites two DWM surfaces. The runner sets Dolphin volume to 75 for A and 0 for B. These settings alone do not establish physical sound or video timing. |
 | Physical Wii A and B | Both SD logs, LAN observations, capture settings and synchronized TV recording | Controller pairing, real heap behavior, wireless/wired link, video resets, audio selection and measured input-to-screen delay. Run H01–H04 below. |
 
+The original `fcavex-gameplay-verification.zip` delivery contains selected evidence from the following disposable runs. Each directory has a `run.json` that identifies the executable, emulator, input SDs and verdict. The full SD images stay on claw.
+
+| Run on claw | Directory inside the archive |
+|---|---|
+| `run-20261122-165529Z-ef623b` | `cold-restart/` |
+| `run-20261122-165529Z-2dc369` | `single-player/` |
+| `run-20261122-165907Z-9253bb` | `separate-views/` |
+| `run-20261122-170025Z-4eb966` | `soak-and-rejoin/` |
+| `run-20261122-170837Z-6c9f35` | `visible-avatars/` |
+| `run-20261122-171254Z-6a5f9b` | `distributable-paired/` |
+
 The requested Windows checkout at game-source commit `edb55a0c9844a99f4a7697b7b8d8dad13ea17ba8` produced Wii ELF SHA-256 `c9f8da6367da3709978c0786817b2e756754f982f5f587c8ca594b5bc6f663ba` and DOL SHA-256 `9e9bf58fdba7329e570608a6e1107fbe3e89e59ad218d42836d73db69f0f65fe` on 22 November 2026. All seven native suites passed. The Windows TCP fault run completed eleven connections and ten rejoins, exchanging 2,200 numbered records in each direction. All three fixture tests passed. Independent reads of the generated cards found the fixture world on A and the offline card and no save on B.
 
 On the same build, two Dolphin 2609b guests on claw entered different slots, moved independently and observed one another's movement. A placed cobblestone at `(8,65,10)`. B removed stone at `(10,65,11)`. Both clients read back the expected type from each edit. The DWM projector kept the host surface while the peer disconnected, and displayed the replacement peer renderer 7.75 seconds after the disconnect. This duration includes relaunching the guest. The H03 physical-video timer starts later, when a valid signal returns. See `gameplay.json`, `projector-connections.txt` and `in-game.png` in `multiplayer-lab/e2e/run-20261122-165529Z-ef623b`.
