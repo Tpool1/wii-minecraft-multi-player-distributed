@@ -23,6 +23,7 @@
 #include "../util.h"
 #include "client_interface.h"
 #include "server_local.h"
+#include "lan_transport.h"
 #include "server_world.h"
 #include "../daytime.h"
 
@@ -70,6 +71,7 @@ void server_world_create(struct server_world* w, string_t level_name,
 	string_init_set(w->level_name, level_name);
 	w->dimension = dimension;
 	w->loaded_regions_length = 0;
+	w->peer_interest = false;
 }
 
 void server_world_destroy(struct server_world* w) {
@@ -204,13 +206,7 @@ bool server_world_set_block(struct server_local* s, w_coord_t x, w_coord_t y, w_
 			w->dimension == WORLD_DIM_NETHER, server_world_light_get_block,
 			server_world_light_set_light, w);
 
-		clin_rpc_send(&(struct client_rpc) {
-			.type = CRPC_SET_BLOCK,
-			.payload.set_block.x = x,
-			.payload.set_block.y = y,
-			.payload.set_block.z = z,
-			.payload.set_block.block = blk,
-		});
+		server_local_publish_block(s, x, y, z, blk);
 	}
 
     static const int dx[6] = {  1, -1,  0,  0,  0,  0 };
@@ -250,14 +246,16 @@ bool server_world_furthest_chunk(struct server_world* w, w_coord_t dist,
 	dict_server_chunks_it_t it;
 	dict_server_chunks_it(it, w->chunks);
 
-	w_coord_t furthest_dist2 = -1;
+	int64_t furthest_dist2 = -1;
 	bool found = false;
 	while(!dict_server_chunks_end_p(it)) {
 		int64_t id = dict_server_chunks_ref(it)->key;
-		w_coord_t d = CHUNK_DIST2(px, S_CHUNK_X(id), pz, S_CHUNK_Z(id));
+		int64_t d = CHUNK_DIST2((int64_t)px, S_CHUNK_X(id), (int64_t)pz, S_CHUNK_Z(id));
 		dict_server_chunks_next(it);
 
 		if((abs(px - S_CHUNK_X(id)) > dist || abs(pz - S_CHUNK_Z(id)) > dist)
+		   && (!w->peer_interest || abs(w->peer_cx - S_CHUNK_X(id)) > dist
+			   || abs(w->peer_cz - S_CHUNK_Z(id)) > dist)
 		   && d > furthest_dist2) {
 			*x = S_CHUNK_X(id);
 			*z = S_CHUNK_Z(id);
@@ -307,16 +305,15 @@ bool server_world_load_chunk(struct server_world* w, w_coord_t x, w_coord_t z,
 	return false;
 }
 
-void server_world_save_chunk(struct server_world* w, bool erase, w_coord_t x,
+bool server_world_save_chunk(struct server_world* w, bool erase, w_coord_t x,
 							 w_coord_t z) {
 	assert(w);
 	struct server_chunk* c
 		= dict_server_chunks_get(w->chunks, S_CHUNK_ID(x, z));
-	if(c)
-		server_world_save_chunk_obj(w, erase, x, z, c);
+	return !c || server_world_save_chunk_obj(w, erase, x, z, c);
 }
 
-void server_world_save_chunk_obj(struct server_world* w, bool erase,
+bool server_world_save_chunk_obj(struct server_world* w, bool erase,
 								 w_coord_t x, w_coord_t z,
 								 struct server_chunk* c) {
 	assert(w && c);
@@ -327,14 +324,18 @@ void server_world_save_chunk_obj(struct server_world* w, bool erase,
 		struct region_archive* ra = server_world_chunk_region(w, x, z);
 
 		if(!ra) {
+			/* The LAN host only edits pre-existing, readable columns. */
+			if(lan_host_enabled()) return false;
 			if(!region_archive_create_new(&tmp, w->level_name,
 										  CHUNK_REGION_COORD(x),
 										  CHUNK_REGION_COORD(z), w->dimension))
-				return;
+				return false;
 			ra = &tmp;
 		}
 
-		region_archive_set_blocks(ra, x, z, c);
+		bool saved = region_archive_set_blocks(ra, x, z, c);
+		if(ra == &tmp) region_archive_destroy(ra);
+		if(!saved) return false;
 		c->modified = false;
 	}
 
@@ -342,6 +343,7 @@ void server_world_save_chunk_obj(struct server_world* w, bool erase,
 		server_world_chunk_destroy(c);
 		dict_server_chunks_erase(w->chunks, S_CHUNK_ID(x, z));
 	}
+	return true;
 }
 
 bool server_world_disk_has_chunk(struct server_world* w, w_coord_t x,
@@ -486,7 +488,9 @@ void server_world_random_tick(struct server_world* w, struct random_gen* g,
 		struct server_chunk* sc = &dict_server_chunks_ref(it)->value;
 		int64_t id = dict_server_chunks_ref(it)->key;
 
-		if(abs(S_CHUNK_X(id) - px) <= dist && abs(S_CHUNK_Z(id) - pz) <= dist) {
+		if((abs(S_CHUNK_X(id) - px) <= dist && abs(S_CHUNK_Z(id) - pz) <= dist)
+		   || (w->peer_interest && abs(S_CHUNK_X(id) - w->peer_cx) <= dist
+			   && abs(S_CHUNK_Z(id) - w->peer_cz) <= dist)) {
 			// 80 random ticks each chunk
 			for(int k = 0; k < 80; k++) {
 				c_coord_t cx = rand_gen_range(g, 0, CHUNK_SIZE);

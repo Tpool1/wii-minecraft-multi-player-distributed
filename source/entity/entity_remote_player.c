@@ -11,7 +11,10 @@ static void remote_render(struct entity *e, mat4 view, float delta) {
 	// The existing inventory model is 32 pixels tall, with the origin at eye level.
 	glm_scale_uni(model, 1.8F / 32.0F);
 	glm_mat4_mul(view, model, mv);
+	// Inventory geometry emits direct RGBA; the surrounding world stream uses indexed colors.
+	gfx_lighting(false);
 	render_model_player(mv, e->orient[1], 0, 0, 0, NULL, NULL, NULL, NULL, NULL);
+	gfx_lighting(true);
 }
 
 static size_t remote_bounds(const struct entity *e, struct AABB *box) {

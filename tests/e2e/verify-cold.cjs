@@ -1,0 +1,48 @@
+'use strict';
+const fs = require('node:fs');
+const { readEvents } = require('./verify-game.cjs');
+
+function snapshots(events, kind) {
+  const result = new Map();
+  for (const row of events.filter(r => r.event === kind)) {
+    const { x, y, z, type } = row.fields;
+    if ([x,y,z,type].every(v => v !== undefined && Number.isInteger(Number(v)))) {
+      result.set([x,y,z].join(','), Number(type));
+    }
+  }
+  return result;
+}
+
+function restoredPose(before, after, slot) {
+  const select = events => events.filter(r => r.event === 'LOCAL' && Number(r.fields.slot) === slot);
+  const a = select(before).at(-1), b = select(after)[0];
+  if (!a || !b) return { passed:false };
+  const distance = Math.hypot(...['x','y','z'].map(k => Number(a.fields[k])-Number(b.fields[k])));
+  return { passed: distance <= 0.40, distance, previous:a.fields, cold:b.fields };
+}
+
+function verify(warmA, warmB, coldA, coldB) {
+  const [a,b,ca,cb] = [warmA,warmB,coldA,coldB].map(readEvents);
+  const initial = snapshots(a,'READ_AT');
+  const final = snapshots(a,'BLOCK');
+  const reloaded = [snapshots(ca,'READ_AT'),snapshots(cb,'READ_AT')];
+  const markers = ['8,65,10','8,65,11','10,65,10','10,65,11'].map(key => {
+    const old = initial.get(key);
+    const expected = final.has(key) ? final.get(key) : old;
+    const actual = reloaded.map(m=>m.get(key));
+    return { key, initial:old, expected, actual,
+      passed: expected !== undefined && actual.every(v=>v===expected) };
+  });
+  const changed = markers.some(m=>m.expected !== undefined && m.initial !== undefined && m.initial !== m.expected);
+  const saves = a.filter(r => r.event==='HOST_SAVE' && r.fields.ok==='1');
+  const hostPose = restoredPose(a,ca,0), peerPose = restoredPose(b,cb,1);
+  return { passed: saves.length>0 && changed && markers.every(m=>m.passed) && hostPose.passed && peerPose.passed,
+    saves, changedMarker:changed, markers, hostPose, peerPose };
+}
+if (require.main===module) {
+  if (process.argv.length!==6) throw new Error('Usage: node verify-cold.cjs WARM-A WARM-B COLD-A COLD-B');
+  const result=verify(...process.argv.slice(2).map(p=>fs.readFileSync(p,'utf8')));
+  console.log(JSON.stringify(result,null,2));
+  process.exitCode=result.passed ? 0 : 1;
+}
+module.exports={verify};

@@ -36,7 +36,17 @@ static bool pointer_has_item;
 static bool pointer_available;
 static float pointer_x, pointer_y, pointer_angle;
 
+static bool saving, save_failed;
+
+void screen_host_save_result(bool ok) {
+	if(!saving) return;
+	saving = false;
+	save_failed = !ok;
+	if(ok) screen_set(&screen_select_world);
+}
+
 static void screen_pause_reset(struct screen* s, int width, int height) {
+	saving = save_failed = false;
 	if(gstate.local_player)
 		gstate.local_player->data.local_player.capture_input = false;
 
@@ -44,6 +54,7 @@ static void screen_pause_reset(struct screen* s, int width, int height) {
 }
 
 static void screen_pause_update(struct screen* s, float dt) {
+	if(saving) return;
 	if(input_pressed(IB_HOME)) {
 		if(gstate.paused)
 			svin_rpc_send(&(struct server_rpc) { .type = SRPC_TOGGLE_PAUSE });
@@ -61,7 +72,8 @@ static void screen_pause_update(struct screen* s, float dt) {
 			svin_rpc_send(&(struct server_rpc) { .type = SRPC_TOGGLE_PAUSE });
 		gstate.paused = false;
 
-		screen_set(&screen_select_world);
+		if(lan_current_role() == LAN_HOST) saving = true;
+		else screen_set(&screen_select_world);
 		svin_rpc_send(&(struct server_rpc) {
 			.type = SRPC_UNLOAD_WORLD,
 		});
@@ -74,7 +86,8 @@ static void screen_pause_render2D(struct screen* s, int width, int height) {
 	gutil_texquad_col(0, 0, 0, 0, 0, 0, width, height, 0, 0, 0, 180);
 	gfx_texture(true);
 
-	gutil_text(4, 4 + (GFX_GUI_SCALE * 8 + 1) * 0, lan_current_role() == LAN_OFFLINE ? "PAUSED" : "Game menu", GFX_GUI_SCALE * 8, true);
+	gutil_text(4, 4 + (GFX_GUI_SCALE * 8 + 1) * 0, saving ? "Saving world..." : save_failed ? "Save failed. Check SD and retry." :
+		lan_current_role() == LAN_OFFLINE ? "PAUSED" : "Game menu", GFX_GUI_SCALE * 8, true);
 
 	int icon_offset = GFX_GUI_SCALE * 16;
 	icon_offset += gutil_control_icon(icon_offset, IB_HOME, "Back to game");

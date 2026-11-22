@@ -46,22 +46,36 @@ struct complex_block_pos {
 	int x, y, z;
 };
 
+struct server_player {
+	double x, y, z;
+	float rx, ry;
+	enum world_dim dimension;
+	bool has_pos;
+	bool finished_loading;
+	struct inventory inventory;
+	struct inventory* active_inventory;
+	short health;
+	int oxygen;
+	int spawn_x, spawn_y, spawn_z;
+	float vel_y, old_vel_y;
+	int fall_y;
+};
+
+#define LAN_RADIUS 2
+#define LAN_COLUMNS ((2 * LAN_RADIUS + 1) * (2 * LAN_RADIUS + 1))
+struct lan_view {
+	struct { w_coord_t x, z; } columns[LAN_COLUMNS];
+	size_t count;
+};
+
 struct server_local {
 	struct random_gen rand_src;
-	struct {
-		double x, y, z;
-		float rx, ry;
-		enum world_dim dimension;
-		bool has_pos;
-		bool finished_loading;
-		struct inventory inventory;
-		struct inventory* active_inventory;
-		short health;
-		int oxygen;
-		int spawn_x, spawn_y, spawn_z;
-		float vel_y, old_vel_y;
-		int fall_y;
-	} player;
+	struct server_player player, peer;
+	struct lan_view views[2];
+	bool peer_joined, peer_record, next_peer;
+	uint32_t last_action[2];
+	uint32_t peer_generation;
+
 	struct server_world world;
 	dict_entity_t entities;
 	struct complex_block_pos chest_pos[MAX_CHESTS];
@@ -75,6 +89,8 @@ struct server_local {
 	ptime_t last_tick;
 };
 
+void server_local_publish_block(struct server_local* s, w_coord_t x, w_coord_t y,
+								w_coord_t z, struct block_data blk);
 void server_local_create(struct server_local* s);
 struct entity* server_local_spawn_minecart(vec3 pos, struct server_local* s);
 struct entity* server_local_spawn_item(vec3 pos, struct item_data* it,

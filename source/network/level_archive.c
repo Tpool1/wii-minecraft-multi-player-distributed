@@ -20,18 +20,28 @@
 #include <assert.h>
 
 #include "level_archive.h"
+#include "checkpoint_file.h"
 
 bool level_archive_create(struct level_archive* la, string_t filename) {
 	assert(la && filename);
 
 	la->modified = false;
+	la->recovered = false;
 
 	string_init_printf(la->file_name, "%s/level.dat",
 					   string_get_cstr(filename));
 
 	la->data = nbt_parse_path(string_get_cstr(la->file_name));
 
-	return la->data;
+	if(!la->data) {
+		string_t previous;
+		string_init_printf(previous, "%s%s", string_get_cstr(la->file_name), CHECKPOINT_PREVIOUS);
+		la->data = nbt_parse_path(string_get_cstr(previous));
+		string_clear(previous);
+		la->recovered = la->data != NULL;
+	}
+	if(!la->data) string_clear(la->file_name);
+	return la->data != NULL;
 }
 
 static bool level_archive_read_internal(nbt_node* root,
@@ -397,17 +407,30 @@ bool level_archive_read_player(struct level_archive* la, vec3 position,
 	return true;
 }
 
+static bool dump_level(FILE *out, void *data) {
+	return nbt_dump_file(data, out, STRAT_GZIP) == NBT_OK;
+}
+
+static bool readable_level(const char *path) {
+	nbt_node *node = nbt_parse_path(path);
+	if(!node) return false;
+	nbt_free(node);
+	return true;
+}
+
+bool level_archive_checkpoint(struct level_archive *la) {
+	if(!la->modified) return true;
+	if(!checkpoint_file(string_get_cstr(la->file_name), la->recovered, dump_level,
+						readable_level, la->data)) return false;
+	la->modified = la->recovered = false;
+	return true;
+}
+
 void level_archive_destroy(struct level_archive* la) {
 	assert(la && la->data);
 
-	if(la->modified) {
-		FILE* f = fopen(string_get_cstr(la->file_name), "wb");
-
-		if(f) {
-			nbt_dump_file(la->data, f, STRAT_GZIP);
-			fclose(f);
-		}
-	}
+	if(la->modified)
+		level_archive_checkpoint(la);
 
 	string_clear(la->file_name);
 	nbt_free(la->data);

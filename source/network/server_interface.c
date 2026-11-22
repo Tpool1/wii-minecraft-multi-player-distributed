@@ -21,6 +21,8 @@
 
 #include "../platform/thread.h"
 #include "server_interface.h"
+#include "lan_transport.h"
+#include "../game/game_state.h"
 
 #define RPC_INBOX_SIZE 16
 static struct server_rpc rpc_msg[RPC_INBOX_SIZE];
@@ -49,7 +51,36 @@ void svin_process_messages(void (*process)(struct server_rpc*, void*),
 void svin_rpc_send(struct server_rpc* call) {
 	assert(call);
 
-	struct server_rpc* empty;
+	/* Commands originate on the local input/render thread. Snapshot the replica
+     * precondition there, before the server thread sees the request. */
+    if(lan_current_role() != LAN_OFFLINE) {
+        static uint32_t next_action;
+        if(call->type == SRPC_BLOCK_DIG || call->type == SRPC_BLOCK_PLACE) {
+            int x, y, z;
+            if(call->type == SRPC_BLOCK_DIG) {
+                x = call->payload.block_dig.x;
+                y = call->payload.block_dig.y;
+                z = call->payload.block_dig.z;
+            } else {
+                int dx, dy, dz;
+                if(call->payload.block_place.side >= SIDE_MAX) return;
+                blocks_side_offset(call->payload.block_place.side, &dx, &dy, &dz);
+                x = call->payload.block_place.x + dx;
+                y = call->payload.block_place.y + dy;
+                z = call->payload.block_place.z + dz;
+            }
+            if(y < 0 || y >= WORLD_HEIGHT || !gstate.world_loaded ||
+               !world_find_chunk(&gstate.world, x, y, z)) return;
+            call->expected_block = world_get_block(&gstate.world, x, y, z).type;
+            call->has_expected_block = true;
+        }
+        call->action_seq = ++next_action;
+        if(lan_current_role() == LAN_PEER) {
+            lan_peer_send(call);
+            return;
+        }
+    }
+    struct server_rpc* empty;
 	tchannel_receive(&svin_empty_msg, (void**)&empty, true);
 	*empty = *call;
 	tchannel_send(&svin_inbox, empty, true);

@@ -30,7 +30,8 @@ class FixtureTest(unittest.TestCase):
             for card, role in [(a, "host"), (b, "peer")]:
                 cfg = json.loads(card.readbytes(APP + "/config.json"))
                 self.assertEqual(cfg["network"], {"role": role, "world": "saves/Fixture",
-                                 "bind": "127.0.0.1", "host": "127.0.0.1", "port": "45838", "trace": "on"})
+                                 "bind": "127.0.0.1", "host": "127.0.0.1", "port": "45838", "trace": "on",
+                                 "metrics": "on", "probes": [8,65,10,8,65,11,10,65,10,10,65,11]})
                 self.assertTrue(cfg["input"]["item_action_left"])
                 for name in ("terrain.png", "particles.png", "default.png", "gui_2.png",
                              "entity/minecart.png", "misc/shadow.png", "armor/diamond_2.png"):

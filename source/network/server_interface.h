@@ -42,6 +42,9 @@ enum server_rpc_type {
 
 struct server_rpc {
 	enum server_rpc_type type;
+	uint32_t action_seq;
+	uint8_t expected_block;
+	bool has_expected_block;
 	union {
 		struct {
 			double x, y, z;

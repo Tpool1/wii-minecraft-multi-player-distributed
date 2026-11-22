@@ -32,6 +32,10 @@
 #include "server_local.h"
 #include "server_world.h"
 #include "complex_block_archive.h"
+#include "server_lan.h"
+#include "lan_transport.h"
+#include "../game/session_trace.h"
+#include "../game/session_metrics.h"
 
 #define CHUNK_DIST2(x1, x2, z1, z2)                                            \
 	(((x1) - (x2)) * ((x1) - (x2)) + ((z1) - (z2)) * ((z1) - (z2)))
@@ -239,6 +243,7 @@ static void server_local_process(struct server_rpc* call, void* user) {
 	assert(call && user);
 
 	struct server_local* s = user;
+	if(lan_host_enabled() && server_lan_local_command(s, call)) return;
 
 	switch(call->type) {
 		case SRPC_TOGGLE_PAUSE:
@@ -408,17 +413,19 @@ static void server_local_process(struct server_rpc* call, void* user) {
 				.payload.world_reset.local_entity = 0,
 			});
 
-			level_archive_write_player(
-				&s->level, (vec3) {s->player.x, s->player.y, s->player.z},
-				(vec2) {s->player.rx, s->player.ry}, NULL, s->player.dimension);
+			if(!lan_host_enabled()) {
+				level_archive_write_player(
+					&s->level, (vec3) {s->player.x, s->player.y, s->player.z},
+					(vec2) {s->player.rx, s->player.ry}, NULL, s->player.dimension);
 
-			level_archive_write_inventory(&s->level, &s->player.inventory);
-			level_archive_write(&s->level, LEVEL_TIME, &s->world_time);
+				level_archive_write_inventory(&s->level, &s->player.inventory);
+				level_archive_write(&s->level, LEVEL_TIME, &s->world_time);
 
-			level_archive_write(&s->level, LEVEL_PLAYER_HEALTH, &s->player.health);
+				level_archive_write(&s->level, LEVEL_PLAYER_HEALTH, &s->player.health);
 
-			chest_archive_write(s->chest_pos, s->chest_items[0], s->level_name);
-			sign_archive_write(s->sign_pos, s->sign_texts[0], s->level_name);
+				chest_archive_write(s->chest_pos, s->chest_items[0], s->level_name);
+				sign_archive_write(s->sign_pos, s->sign_texts[0], s->level_name);
+			}
 
 			dict_entity_it_t it;
 			dict_entity_it(it, s->entities);
@@ -434,19 +441,24 @@ static void server_local_process(struct server_rpc* call, void* user) {
 			s->player.has_pos = false;
 			s->player.finished_loading = false;
 			string_reset(s->level_name);
+			if(lan_host_enabled()) {
+				session_trace("HOST_SAVE ok=1");
+				clin_rpc_send(&(struct client_rpc){.type=CRPC_HOST_SAVE_RESULT,.payload.host_save_result=true});
+			}
 			break;
 
-		case SRPC_ENTITY_ATTACK:
+		case SRPC_ENTITY_ATTACK: {
 		  uint32_t id = call->payload.entity_attack.entity_id;
 		  struct entity **ptr = dict_entity_get(s->entities, id);
 		  if (ptr && *ptr) {
-		    (*ptr)->health -= 5;    // of welk DAMAGE‐getal je wilt
+		    (*ptr)->health -= 5;    // of welk DAMAGE-getal je wilt
 		    if ((*ptr)->health <= 0) {
 		      (*ptr)->data.monster.fuse = 30;
 		      (*ptr)->ai_state = AI_FUSE;
 		    }
 		  }
 		  break;
+		}
 		case SRPC_LOAD_WORLD:
 			assert(!s->player.has_pos);
 
@@ -469,6 +481,7 @@ static void server_local_process(struct server_rpc* call, void* user) {
 					s->player.old_vel_y = 0;
 					s->player.vel_y = 0;
 					s->player.has_pos = true;
+					if(lan_host_enabled()) level_archive_read_inventory(&s->level,&s->player.inventory);
 				}
 
 				level_archive_read(&s->level, LEVEL_TIME, &s->world_time, 0);
@@ -515,6 +528,7 @@ static void server_local_update(struct server_local* s) {
 	#endif
 
 	svin_process_messages(server_local_process, s, false);
+	if(lan_host_enabled()) server_lan_pump(s);
 
 	if(!s->player.has_pos || s->paused)
 		return;
@@ -556,106 +570,110 @@ static void server_local_update(struct server_local* s) {
 		}
 	}
 
-	w_coord_t px = WCOORD_CHUNK_OFFSET(floor(s->player.x));
-	w_coord_t pz = WCOORD_CHUNK_OFFSET(floor(s->player.z));
+	if(lan_host_enabled()) {
+		server_lan_stream(s);
+	} else {
+		w_coord_t px = WCOORD_CHUNK_OFFSET(floor(s->player.x));
+		w_coord_t pz = WCOORD_CHUNK_OFFSET(floor(s->player.z));
 
-	server_world_random_tick(&s->world, &s->rand_src, s, px, pz,
-							 MAX_VIEW_DISTANCE - 2);
-	server_world_tick(&s->world, s);
+		server_world_random_tick(&s->world, &s->rand_src, s, px, pz,
+								 MAX_VIEW_DISTANCE - 2);
+		server_world_tick(&s->world, s);
 
-	w_coord_t cx, cz;
-	if(server_world_furthest_chunk(&s->world, MAX_VIEW_DISTANCE, px, pz, &cx,
-								   &cz)) {
-		// unload just one chunk
-		server_world_save_chunk(&s->world, true, cx, cz);
-		clin_rpc_send(&(struct client_rpc) {
-			.type = CRPC_UNLOAD_CHUNK,
-			.payload.unload_chunk.x = cx,
-			.payload.unload_chunk.z = cz,
-		});
-	}
-
-	// iterate over all chunks that should be loaded
-	bool c_nearest = false;
-	w_coord_t c_nearest_x, c_nearest_z;
-	w_coord_t c_nearest_dist2;
-	for(w_coord_t z = pz - MAX_VIEW_DISTANCE; z <= pz + MAX_VIEW_DISTANCE;
-		z++) {
-		for(w_coord_t x = px - MAX_VIEW_DISTANCE; x <= px + MAX_VIEW_DISTANCE;
-			x++) {
-			w_coord_t d = CHUNK_DIST2(px, x, pz, z);
-			if(!server_world_is_chunk_loaded(&s->world, x, z)
-			   && (d < c_nearest_dist2 || !c_nearest)
-			   && server_world_disk_has_chunk(&s->world, x, z)) {
-				c_nearest_dist2 = d;
-				c_nearest_x = x;
-				c_nearest_z = z;
-				c_nearest = true;
-			}
+		w_coord_t cx, cz;
+		if(server_world_furthest_chunk(&s->world, MAX_VIEW_DISTANCE, px, pz, &cx,
+									   &cz)) {
+			// unload just one chunk
+			server_world_save_chunk(&s->world, true, cx, cz);
+			clin_rpc_send(&(struct client_rpc) {
+				.type = CRPC_UNLOAD_CHUNK,
+				.payload.unload_chunk.x = cx,
+				.payload.unload_chunk.z = cz,
+			});
 		}
-	}
 
-	// load just one chunk
-	struct server_chunk* sc;
-	if(c_nearest
-	   && server_world_load_chunk(&s->world, c_nearest_x, c_nearest_z, &sc)) {
-		size_t sz = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
-		void* ids = malloc(sz);
-		void* metadata = malloc(sz / 2);
-		void* lighting_sky = malloc(sz / 2);
-		void* lighting_torch = malloc(sz / 2);
-
-		memcpy(ids, sc->ids, sz);
-		memcpy(metadata, sc->metadata, sz / 2);
-		memcpy(lighting_sky, sc->lighting_sky, sz / 2);
-		memcpy(lighting_torch, sc->lighting_torch, sz / 2);
-
-		clin_rpc_send(&(struct client_rpc) {
-			.type = CRPC_CHUNK,
-			.payload.chunk.x = c_nearest_x * CHUNK_SIZE,
-			.payload.chunk.y = 0,
-			.payload.chunk.z = c_nearest_z * CHUNK_SIZE,
-			.payload.chunk.sx = CHUNK_SIZE,
-			.payload.chunk.sy = WORLD_HEIGHT,
-			.payload.chunk.sz = CHUNK_SIZE,
-			.payload.chunk.ids = ids,
-			.payload.chunk.metadata = metadata,
-			.payload.chunk.lighting_sky = lighting_sky,
-			.payload.chunk.lighting_torch = lighting_torch,
-		});
-	} else if(!s->player.finished_loading) {
-		struct client_rpc pos;
-		pos.type = CRPC_PLAYER_POS;
-		if(level_archive_read_player(&s->level, pos.payload.player_pos.position,
-									 pos.payload.player_pos.rotation, NULL,
-									 NULL))
-			clin_rpc_send(&pos);
-
-		clin_rpc_send(&(struct client_rpc) {
-			.type = CRPC_TIME_SET,
-			.payload.time_set = s->world_time,
-		});
-
-		if(level_archive_read_inventory(&s->level, &s->player.inventory)) {
-			for(size_t k = 0; k < INVENTORY_SIZE; k++) {
-				if(s->player.inventory.items[k].id > 0) {
-					clin_rpc_send(&(struct client_rpc) {
-						.type = CRPC_INVENTORY_SLOT,
-						.payload.inventory_slot.window = WINDOWC_INVENTORY,
-						.payload.inventory_slot.slot = k,
-						.payload.inventory_slot.item
-						= s->player.inventory.items[k],
-					});
+		// iterate over all chunks that should be loaded
+		bool c_nearest = false;
+		w_coord_t c_nearest_x, c_nearest_z;
+		w_coord_t c_nearest_dist2;
+		for(w_coord_t z = pz - MAX_VIEW_DISTANCE; z <= pz + MAX_VIEW_DISTANCE;
+			z++) {
+			for(w_coord_t x = px - MAX_VIEW_DISTANCE; x <= px + MAX_VIEW_DISTANCE;
+				x++) {
+				w_coord_t d = CHUNK_DIST2(px, x, pz, z);
+				if(!server_world_is_chunk_loaded(&s->world, x, z)
+				   && (d < c_nearest_dist2 || !c_nearest)
+				   && server_world_disk_has_chunk(&s->world, x, z)) {
+					c_nearest_dist2 = d;
+					c_nearest_x = x;
+					c_nearest_z = z;
+					c_nearest = true;
 				}
 			}
 		}
 
-		s->player.finished_loading = true;
+		// load just one chunk
+		struct server_chunk* sc;
+		if(c_nearest
+		   && server_world_load_chunk(&s->world, c_nearest_x, c_nearest_z, &sc)) {
+			size_t sz = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
+			void* ids = malloc(sz);
+			void* metadata = malloc(sz / 2);
+			void* lighting_sky = malloc(sz / 2);
+			void* lighting_torch = malloc(sz / 2);
+
+			memcpy(ids, sc->ids, sz);
+			memcpy(metadata, sc->metadata, sz / 2);
+			memcpy(lighting_sky, sc->lighting_sky, sz / 2);
+			memcpy(lighting_torch, sc->lighting_torch, sz / 2);
+
+			clin_rpc_send(&(struct client_rpc) {
+				.type = CRPC_CHUNK,
+				.payload.chunk.x = c_nearest_x * CHUNK_SIZE,
+				.payload.chunk.y = 0,
+				.payload.chunk.z = c_nearest_z * CHUNK_SIZE,
+				.payload.chunk.sx = CHUNK_SIZE,
+				.payload.chunk.sy = WORLD_HEIGHT,
+				.payload.chunk.sz = CHUNK_SIZE,
+				.payload.chunk.ids = ids,
+				.payload.chunk.metadata = metadata,
+				.payload.chunk.lighting_sky = lighting_sky,
+				.payload.chunk.lighting_torch = lighting_torch,
+			});
+		} else if(!s->player.finished_loading) {
+			struct client_rpc pos;
+			pos.type = CRPC_PLAYER_POS;
+			if(level_archive_read_player(&s->level, pos.payload.player_pos.position,
+										 pos.payload.player_pos.rotation, NULL,
+										 NULL))
+				clin_rpc_send(&pos);
+
+			clin_rpc_send(&(struct client_rpc) {
+				.type = CRPC_TIME_SET,
+				.payload.time_set = s->world_time,
+			});
+
+			if(level_archive_read_inventory(&s->level, &s->player.inventory)) {
+				for(size_t k = 0; k < INVENTORY_SIZE; k++) {
+					if(s->player.inventory.items[k].id > 0) {
+						clin_rpc_send(&(struct client_rpc) {
+							.type = CRPC_INVENTORY_SLOT,
+							.payload.inventory_slot.window = WINDOWC_INVENTORY,
+							.payload.inventory_slot.slot = k,
+							.payload.inventory_slot.item
+							= s->player.inventory.items[k],
+						});
+					}
+				}
+			}
+
+			s->player.finished_loading = true;
+		}
 	}
 
 	// check if player is underwater
 	// server side X off by one?
-	struct block_data blk;
+	struct block_data blk = {0};
 	server_world_get_block(&s->world, s->player.x-1, s->player.y, s->player.z, &blk);
 	bool in_water = (blk.type == BLOCK_WATER_STILL || blk.type == BLOCK_WATER_FLOW);
 	bool in_lava = (blk.type == BLOCK_LAVA_STILL || blk.type == BLOCK_LAVA_FLOW);
@@ -694,7 +712,9 @@ static void server_local_update(struct server_local* s) {
 
 static void* server_local_thread(void* user) {
 	while(1) {
+		ptime_t start=time_get();
 		server_local_update(user);
+		session_metrics_tick(start,time_get());
 		thread_msleep(50);
 	}
 
@@ -703,6 +723,7 @@ static void* server_local_thread(void* user) {
 
 void server_local_create(struct server_local* s) {
 	assert(s);
+	*s = (struct server_local){0};
 	rand_gen_seed(&s->rand_src);
 	s->paused = false;
 	s->world_time = 0;

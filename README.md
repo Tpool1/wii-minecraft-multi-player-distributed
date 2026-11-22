@@ -1,66 +1,62 @@
-# fCavEX
+# fCavEX · Two-Wii multiplayer
 
-[Cave Explorer](https://github.com/xtreme8000/CavEX) by [xtreme8000](https://github.com/xtreme8000) is a Wii homebrew game with the goal to recreate most of the core survival aspects up until Beta 1.7.3. ~~Any features beyond *will not* be added.~~
+Two players share a block world. The host Wii simulates the world and owns the save. The second Wii joins as a peer. Each player uses a local controller, camera and renderer. The game sends state over LAN. Showing both video feeds on one TV requires a separate two-input compositor.
 
-*fCavEX* (forked CavEX) is an experimental fork of CavEX, made by [yyy257](https://github.com/yyy257), with all kinds of changes and additions. Some additions may not be from the original game and some mechanics may be different - this fork is not aiming for a 1:1 recreation. Unlike CavEX, fCavEX does not aim for complete save compatibility - for instance, chests and signs use an incompatible saving system with static limits and some blocks may use metadata values differently. Until stated otherwise, a freshly created save should be compatible, as fCavEX does not have its own world generator yet.
+[Editable system architecture](docs/fcavex-system-architecture.drawio) · [Editable test design](docs/fcavex-test-design.drawio) · [Wii controls](controls.md)
 
-I took yyy257's fork and decided to continue the work he's done, and add more features. All is still highly experimental.
+## Build the Wii game on Windows
 
----
-**Changes, compared to yyy257's fCavEX**
+Use PowerShell 7, Windows `tar.exe`, a native C compiler and a Wii toolchain. The lab SDK contains `devkitPPC/bin/powerpc-eabi-gcc.exe` (r35) and `libogc/{include,lib/wii}` (1.8.19). The build script fetches the pinned dependencies, checks each archive’s SHA-256 and builds both the game and the ELF-to-DOL converter.
 
-* Redstone functionality: redstone torches, wires, pressure plates can power doors and trapdoors. It's an early version and wire placement doesn't look good yet. Pistons and repeaters are planned to be added as well.
-* Farming crops: dirt to farmland with a hoe, planting seeds to let crops grow
-* Growing mushrooms: mushrooms spread when they're in the dark.
-* Fire: You can set stuff on fire with your flint&steel, fire can spread to flammable objects.
-* Bed: Using a bed progresses time. Still a work in progress but the basics are there
-* Stars at night, to make it easier to orient during total darkness at night.
-* Particle effects for torches. Just looks a bit better. (uses particles.png)
-* TNT can now explode. 
+In the repository root, set `FCAVEX_SDK` to the SDK directory and `CC` to the native compiler executable. Then run
 
----
-
-**Planned features** *(in no particular order, not complete)*
-* Sounds
-* Block gravity: sand and gravel drop down when there's nothing underneath them to support
-* Water/lava flow: once a brick has been removed next to, or underneath a liquid, it will flow there
-* Additional controller support
-* Mobs
-* Minecarts
-* Fixes to existing bugs:
-	- Furnace has 4 identical sides
- 	- leaves stay floatingin the air after log has been removed
- 
-**Known issues**
-* Texture orientation for blocks that have a specific "direction"
-	- Bed placement isn't correct yet
-	- Redstone wire texture goes only in 1 orientation, no corners and intersections are displayed (although redstone does work in all directions)
-	- Rails have the same texture behavior as redstone wire.
-* Random crashes, once in a while.. Maybe I'll implement an optional auto-save, to prevent some headaches and tears
-* Particles already spark fire before the torch is showing, after placing a torch
-* Probably more, but don't be a hater please.
-
-## Screenshot
-
-![ingame0](docs/ingame0.png)
-*(from the PC version)*
-
-There should then be a .dol file in the root directory that your Wii can run. To copy the game to your `apps/` folder, it needs to look like this:
+```powershell
+.\tools\windows\Build-Wii.ps1 -SdkRoot $env:FCAVEX_SDK -HostCompiler $env:CC
+.\tests\run.ps1 -Compiler $env:CC
 ```
-cavex
-├── assets
-│   ├── terrain.png
-│   ├── particles.png
-│   ├── items.png
-│   ├── anim.png
-│   ├── default.png
-│   ├── gui.png
-│   └── gui2.png
-├── saves
-│   ├── world
-│   └── ...
-├── boot.dol
-├── config.json
-├── icon.png
-└── meta.xml
+
+The build writes `boot.dol`, `boot.elf` and `boot.map` under `build/claw/`. Its GCC settings use GNU99, `-O2` and section garbage collection. Historical release binaries used a different build configuration. Native tests reuse the staged headers. To use headers prepared elsewhere, pass `-IncludeDir` to the test runner and point it to the parent of `cglm/` and `m-lib/`.
+
+On claw the native compiler is Clang 23.1.6. To reproduce it, unpack `llvm-mingw-20261117-ucrt-x86_64.zip` and set `CC` to its `bin/clang.exe`. The release SHA-256 is `4d002e330a0f703625aa5ccbc37e96f8f824413e163bfc7336774aabd2c3a412`. [Compiler release](https://github.com/mstorsjo/llvm-mingw/releases/tag/20261117)
+
+## Configure a two-player session
+
+Each console needs its own `sd:/apps/fcavex/` directory containing `boot.dol`, `config.json` and permitted `assets/`. For Wii controls, start with `config_wii.json` and copy it as `config.json`. The host also needs a compatible prebuilt world in `saves/`. Start with a disposable copy. The inherited game uses custom chest and sign persistence. The fixture tool generates a small world, test art and complete example configurations. [Fixture instructions](tools/multiplayer_fixture/README.md)
+
+Set the fields below inside a top-level `network` object in `config.json`, preserving the other settings. Start the host and load its world, then start the peer. Omitting the `network` object selects offline play.
+
+| Setting | Host | Peer |
+|---|---|---|
+| `role` | `"host"` | `"peer"` |
+| `bind` | Local private IPv4 address of the host Wii | Default |
+| `host` | Default | Same private IPv4 address as the host |
+| `port` | `"45838"` | `"45838"` |
+| `world` | Optional relative save path, e.g. `"saves/Fixture"` | Omit |
+
+The supplied same-PC Dolphin fixture uses `127.0.0.1` on both guests. Physical Wiis need the host’s LAN address. Set `"trace": "on"` inside `network` to record test events.
+
+## Exercise both guests
+
+The native suite checks launch choices, authority behavior and on-wire messages. The two-guest test runs the built Wii executable in separate Dolphin profiles on Windows. Install the fixture tool’s Python requirements. Set `DOLPHIN` to the emulator executable, `FCAVEX_CARDS` to a fresh fixture directory and `FCAVEX_RUNS` to a separate directory for disposable runs.
+
+```powershell
+python -m unittest discover -s tools/multiplayer_fixture -p test_fixture.py -v
+python tools/multiplayer_fixture/make_fixture.py build $env:FCAVEX_CARDS
+.\tests\e2e\run.ps1 -Game .\build\claw\boot.elf -Dolphin $env:DOLPHIN -HostCard "$env:FCAVEX_CARDS\A.raw" -PeerCard "$env:FCAVEX_CARDS\B.raw" -OutputRoot $env:FCAVEX_RUNS
 ```
+
+For human-controlled play, add `-Play` to the same command. Player A uses WASD for the D-pad and player B uses the arrow keys. F11 toggles the two-view projector between windowed and fullscreen. Escape closes the projector and both guests.
+
+Each run has a new directory under `FCAVEX_RUNS`. Open `run.json` for build hashes and the outcome, and `gameplay.json` for the gameplay checks when both guests produced logs. To check the logs independently, run `node tests/e2e/verify-game.cjs <host-log> <peer-log>`. It checks for distinct slots, movement observed across the connection in each direction, and an accepted edit from each player applied to both views. Physical Wii memory, capture latency, audio and save recovery have separate acceptance checks in the test diagram.
+
+## Contribute
+
+Game code lives in `source/`. Look in `source/network/` for transport, world authority and persistence, `source/game/` for launch behavior and UI, and `source/platform/` for hardware interfaces. The `tests/`, `tools/` and `docs/` directories hold regression tests, build and fixture tools, and design diagrams.
+
+Add a failing regression case before changing behavior. Run the native suite for protocol or authority changes. Rebuild and exercise both guests for changes affecting gameplay. Include the revision, test inputs and first failing check when reporting a bug. Keep generated executables, packed SD cards and private saves outside commits.
+
+## Credits and licensing
+
+xtreme8000 created Cave Explorer. yyy257 created fCavEX, jilleb extended it, and this work builds on Tristen’s fork at `7023e0e`. The baseline includes farming, redstone, particles and other experimental features. [Original CavEX](https://github.com/xtreme8000/CavEX) · [yyy257/fCavEX](https://github.com/yyy257/fCavEX) · [jilleb/fCavEX](https://github.com/jilleb/fCavEX) · [Tristen’s pinned fork](https://github.com/Tpool1/fCavEX/tree/7023e0e025ac5ad45e389755192e84392ee1b040) · [Earlier changes](CHANGES.md)
+
+CavEX source is licensed under GPL-3.0-or-later. Asset licenses vary by file. The inherited credits list the controls icon license as unknown. The fixture uses generated artwork and the credited bitmap font. [Source license](LICENSE) · [Asset credits](assets/README.md)

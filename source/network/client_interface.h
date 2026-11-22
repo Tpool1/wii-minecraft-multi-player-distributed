@@ -45,11 +45,13 @@ enum client_rpc_type {
 	CRPC_SPAWN_MONSTER,
 	CRPC_SPAWN_MINECART,
 	CRPC_REMOTE_PLAYER,
+	CRPC_HOST_SAVE_RESULT, /* local host UI only */
 };
 
 struct client_rpc {
 	enum client_rpc_type type;
 	union {
+		bool host_save_result;
 		struct {
 			w_coord_t x, y, z;
 			w_coord_t sx, sy, sz;

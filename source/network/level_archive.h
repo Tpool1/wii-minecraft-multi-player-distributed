@@ -115,6 +115,7 @@ struct level_archive {
 	nbt_node* data;
 	string_t file_name;
 	bool modified;
+	bool recovered;
 };
 
 bool level_archive_create(struct level_archive* la, string_t filename);
@@ -132,6 +133,7 @@ bool level_archive_read_inventory(struct level_archive* la,
 bool level_archive_read_player(struct level_archive* la, vec3 position,
 							   vec2 rotation, vec3 velocity,
 							   enum world_dim* dimension);
+bool level_archive_checkpoint(struct level_archive *la);
 void level_archive_destroy(struct level_archive* la);
 
 #endif

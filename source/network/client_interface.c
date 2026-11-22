@@ -74,6 +74,7 @@ void clin_chunk(w_coord_t x, w_coord_t y, w_coord_t z, w_coord_t sx,
 		}
 	}
 
+	session_trace_column(&gstate.world, x, y, z, sx, sy, sz);
 	free(ids);
 	free(metadata);
 	free(lighting_sky);
@@ -251,6 +252,9 @@ void clin_process(struct client_rpc* call) {
 					call->payload.set_block.y, call->payload.set_block.z).type);
 
 			break;
+		case CRPC_HOST_SAVE_RESULT:
+			screen_host_save_result(call->payload.host_save_result);
+			break;
 		case CRPC_REMOTE_PLAYER: {
 			const uint32_t id = call->payload.remote_player.entity_id;
 			struct entity **entry = dict_entity_get(gstate.entities, id);
@@ -355,7 +359,14 @@ void clin_init() {
 	last_pos_update = time_get();
 }
 
+static void clin_lost_host(void) {
+    gstate.world_loaded = false;
+    screen_set(&screen_load_world);
+}
+
 void clin_update() {
+    if(lan_current_role() == LAN_PEER)
+        lan_peer_pump(clin_process, clin_lost_host);
 	void* call;
 	while(tchannel_receive(&clin_inbox, &call, false)) {
 		clin_process(call);

@@ -23,6 +23,7 @@
 #include <math.h>
 #include <string.h>
 
+#include "../../game/session_metrics.h"
 #include "../../graphics/texture_atlas.h"
 #include "../../util.h"
 #include "../gfx.h"
@@ -74,6 +75,7 @@ static void copy_buffers(u32 cnt) {
 	mqmsg_t input_frame;
 
 	if(MQ_Receive(frame_draw, &input_frame, MQ_MSG_NOBLOCK)) {
+		session_metrics_present(cnt);
 		VIDEO_SetNextFramebuffer(input_frame);
 		VIDEO_Flush();
 
@@ -134,6 +136,7 @@ void gfx_setup() {
 	fifoBuffer = MEM_K0_TO_K1(memalign(32, FIFO_SIZE));
 	memset(fifoBuffer, 0, FIFO_SIZE);
 
+	session_metrics_buffers(frameBuffer, VIDEO_GetFrameBufferSize(screenMode), fifoBuffer, FIFO_SIZE);
 	GX_Init(fifoBuffer, FIFO_SIZE);
 	gfx_clear_buffers(255, 255, 255);
 	GX_SetViewport(0, 0, screenMode->fbWidth, screenMode->efbHeight, 0, 1);

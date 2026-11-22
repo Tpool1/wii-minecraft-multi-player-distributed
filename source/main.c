@@ -35,6 +35,7 @@
 #include "game/game_state.h"
 #include "game/session_launch.h"
 #include "game/session_trace.h"
+#include "game/session_metrics.h"
 #include "game/gui/screen.h"
 #include "graphics/gfx_util.h"
 #include "graphics/gui_util.h"
@@ -108,6 +109,8 @@ int main(void) {
 		config_read_string(&gstate.config_user, "network.role", NULL),
 		config_read_string(&gstate.config_user, "network.port", NULL), world);
 	session_trace_enable(!strcmp(config_read_string(&gstate.config_user, "network.trace", ""), "on"));
+	session_trace_probes(&gstate.config_user);
+	session_metrics_enable(!strcmp(config_read_string(&gstate.config_user, "network.metrics", ""), "on"));
 	bool configured = launch.screen != LAUNCH_ERROR &&
 		lan_configure(launch.role, config_read_string(&gstate.config_user, "network.bind", "127.0.0.1"),
 					  config_read_string(&gstate.config_user, "network.host", "127.0.0.1"), launch.port);
@@ -134,6 +137,7 @@ int main(void) {
 
 	while(!gstate.quit) {
 		ptime_t this_frame = time_get();
+		session_metrics_frame(this_frame);
 		gstate.stats.dt = time_diff_s(last_frame, this_frame);
 		gstate.stats.fps = 1.0F / gstate.stats.dt;
 		last_frame = this_frame;

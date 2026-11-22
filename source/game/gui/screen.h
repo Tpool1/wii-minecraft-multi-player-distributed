@@ -44,6 +44,7 @@ extern struct screen screen_sign;
 extern struct screen screen_pause;
 
 void screen_set(struct screen* s);
+void screen_host_save_result(bool ok);
 void screen_load_error(const char *message);
 
 void screen_crafting_set_windowc(uint8_t container);

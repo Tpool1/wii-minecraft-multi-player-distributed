@@ -13,6 +13,8 @@ find_package(GLEW REQUIRED)
 add_executable(cavex
 				source/block/aabb.c
 				source/block/block_bed.c
+				source/block/block_minecart.c
+				source/block/block_redstone_wire.c
 				source/block/block_bedrock.c
 				source/block/block_bookshelf.c
 				source/block/block_bricks.c
@@ -82,6 +84,8 @@ add_executable(cavex
 				source/entity/entity_local_player.c
 				source/entity/entity_item.c
 				source/entity/entity_monster.c
+				source/entity/entity_minecart.c
+				source/entity/entity_remote_player.c
 
 				source/cNBT/buffer.c
 				source/cNBT/nbt_loading.c
@@ -102,6 +106,9 @@ add_executable(cavex
 				source/game/gui/screen.c
 				source/game/camera.c
 				source/game/game_state.c
+				source/game/session_launch.c
+				source/game/session_trace.c
+				source/game/session_metrics.c
 
 				source/item/window_container.c
 				source/item/inventory.c
@@ -109,6 +116,12 @@ add_executable(cavex
 				source/item/tool.c
 				source/item/recipe.c
 				source/item/items/item_sugarcane.c
+				source/item/items/item_bed.c
+				source/item/items/item_bucket.c
+				source/item/items/item_bucket_water.c
+				source/item/items/item_bucket_lava.c
+				source/item/items/item_minecart.c
+				source/item/items/item_redstone.c
 				source/item/items/item_porkchop.c
 				source/item/items/item_porkchop_cooked.c
 				source/item/items/item_door_wood.c
@@ -124,6 +137,12 @@ add_executable(cavex
 				source/item/items/item_seeds.c
 
 				source/network/client_interface.c
+				source/network/lan_frame.c
+				source/network/lan_rpc.c
+				source/network/lan_transport.c
+				source/network/checkpoint_file.c
+				source/network/peer_record.c
+				source/network/server_lan.c
 				source/network/complex_block_archive.c
 				source/network/level_archive.c
 				source/network/region_archive.c
@@ -143,7 +162,7 @@ add_executable(cavex
 				source/graphics/render_block.c
 				source/graphics/render_item.c
 				source/graphics/render_model.c
-				source/graphics/render_monster.c
+				source/graphics/render_entity.c
 				source/graphics/texture_atlas.c
 
 				source/platform/displaylist.c
@@ -168,6 +187,11 @@ add_executable(cavex
 
 				source/parson/parson.c
 			)
+
+target_include_directories(cavex PRIVATE source)
+if(WIN32)
+    target_link_libraries(cavex ws2_32)
+endif()
 
 target_compile_definitions(cavex PRIVATE PLATFORM_PC CGLM_ALL_UNALIGNED)
 

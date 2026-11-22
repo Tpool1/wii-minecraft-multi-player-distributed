@@ -157,8 +157,8 @@ def build(output):
         raise FileExistsError(f"Choose a new directory for disposable media: {output}")
     art = assets()
     world = {"level.dat": level(), **make_regions()}
-    # Baseline Wii config is JSON with a trailing comma in the input object.
-    base = json.loads(re.sub(r",\s*([}\]])", r"\1", (REPO/"config_wii.json").read_text()))
+    # Load the same configuration distributed with the game.
+    base = json.loads((REPO/"config_wii.json").read_text())
     with tempfile.TemporaryDirectory(dir=output.parent) as scratch:
         staged = Path(scratch)/"media"
         staged.mkdir()
@@ -170,7 +170,8 @@ def build(output):
             fat.close()
             with PyFatFS(str(disk), utc=True) as card:
                 cfg = dict(base, network=dict(role=role, bind="127.0.0.1", host="127.0.0.1",
-                                              port="45838", world="saves/Fixture", trace="on"))
+                                              port="45838", world="saves/Fixture", trace="on", metrics="on",
+                                              probes=[8,65,10,8,65,11,10,65,10,10,65,11]))
                 # Keep a private saves directory even for peers with no world.
                 card.makedirs(APP+"/saves",recreate=True)
                 card.writebytes(APP+"/config.json", json.dumps(cfg, indent=2).encode())

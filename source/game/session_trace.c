@@ -29,6 +29,8 @@ distribution.
  * Formats opt-in game event records and preserves the Dolphin-only hardware guard. */
 
 #include "session_trace.h"
+#include "../config.h"
+#include "../world.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -70,6 +72,25 @@ void session_trace(const char *format, ...) {
 #else
 	fputs(buf, stdout);
 #endif
+}
+
+static int probes[4 * 3];
+static size_t probe_count;
+
+void session_trace_probes(struct config *config) {
+	size_t count = sizeof probes / sizeof *probes;
+	if(enabled && config_read_int_array(config, "network.probes", probes, &count))
+		probe_count = count / 3;
+}
+
+void session_trace_column(struct world *world, int x, int y, int z, int sx, int sy, int sz) {
+	for(size_t i = 0; i < probe_count; i++) {
+		int *p = &probes[i * 3];
+		if(p[0] >= x && p[0] < x + sx && p[1] >= y && p[1] < y + sy && p[2] >= z && p[2] < z + sz) {
+			struct block_data block = world_get_block(world, p[0], p[1], p[2]);
+			session_trace("READ_AT x=%d y=%d z=%d type=%u", p[0], p[1], p[2], (unsigned)block.type);
+		}
+	}
 }
 
 void session_trace_pose(bool remote, int slot, float x, float y, float z) {
