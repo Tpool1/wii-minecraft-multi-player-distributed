@@ -55,6 +55,8 @@ python tools/multiplayer_fixture/make_fixture.py build $env:FCAVEX_CARDS
 
 Each run has a new directory under `FCAVEX_RUNS`. Open `run.json` for build hashes and the outcome, and `gameplay.json` for the gameplay checks when both guests produced logs. To check the logs independently, run `node tests/e2e/verify-game.cjs <host-log> <peer-log>`. It checks for distinct slots, movement observed across the connection in each direction, and an accepted edit from each player applied to both views. Physical Wii memory, capture latency, audio and save recovery have separate acceptance checks in the test diagram.
 
+To exercise delayed and stalled application sends over loopback, run the [five-profile TCP test](tests/wire/profiles/README.md). It reports per-probe delivery times, ordering and checksums.
+
 ## Contribute
 
 Game code lives in `source/`. Look in `source/network/` for transport, world authority and persistence, `source/game/` for launch behavior and UI, and `source/platform/` for hardware interfaces. The `tests/`, `tools/` and `docs/` directories hold regression tests, build and fixture tools, and design diagrams.
