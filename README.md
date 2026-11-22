@@ -4,6 +4,12 @@ Two players share a block world. The host Wii simulates the world and owns the s
 
 [Editable system architecture](docs/fcavex-system-architecture.drawio) · [Editable test design](docs/fcavex-test-design.drawio) · [Wii controls](controls.md)
 
+## What the LAN game supports
+
+The two-player mode streams existing terrain within two columns of each player. Each Wii draws one view and the other player’s avatar. Both players can move, choose a hotbar slot, mine and place stone, cobblestone, dirt, grass, planks, sand and gravel. Mining credits the acting player’s inventory. The host saves both players and the shared terrain. A returning peer receives a fresh snapshot.
+
+Use offline mode for crafting, container interactions, combat and the full inherited entity behavior. The LAN peer does not receive a complete simulation of mobs or minecarts. The two-player build uses one fixed peer slot, trusted private IPv4 and prebuilt region files. Windows Dolphin is the tested configuration. Physical Wii model, SD, controller, LAN and display-chain acceptance are tracked separately. [Hardware acceptance](docs/hardware-acceptance.md)
+
 ## Build the Wii game on Windows
 
 Use PowerShell 7, Windows `tar.exe`, a native C compiler and a Wii toolchain. The lab SDK contains `devkitPPC/bin/powerpc-eabi-gcc.exe` (r35) and `libogc/{include,lib/wii}` (1.8.19). The build script fetches the pinned dependencies, checks each archive’s SHA-256 and builds both the game and the ELF-to-DOL converter.

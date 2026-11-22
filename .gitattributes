@@ -1,0 +1,2 @@
+# Preserve the reviewed diagram XML byte-for-byte on Windows.
+*.drawio text eol=lf
